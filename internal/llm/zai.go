@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/devlin-ai/devlin/internal/logger"
 	"github.com/devlin-ai/devlin/internal/message"
 )
 
@@ -58,10 +59,12 @@ func (z *ZaiProvider) Stream(ctx context.Context, messages []message.Message) (<
 
 	go func() {
 		defer close(ch)
+		log := logger.L()
 
 		resp, err := httpClient.Do(req)
 
 		if err != nil {
+			log.Error("http request failed", "error", err)
 			ch <- message.StreamEvent{
 				Type:  message.StreamEventError,
 				Error: err.Error(),
@@ -70,6 +73,10 @@ func (z *ZaiProvider) Stream(ctx context.Context, messages []message.Message) (<
 		}
 
 		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			log.Error("unexpected status code", "status", resp.StatusCode)
+		}
 
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
@@ -100,6 +107,7 @@ func (z *ZaiProvider) Stream(ctx context.Context, messages []message.Message) (<
 				} `json:"choices"`
 			}
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+				log.Warn("failed to unmarshal SSE chunk", "data", data, "error", err)
 				continue
 			}
 			if len(chunk.Choices) == 0 {
