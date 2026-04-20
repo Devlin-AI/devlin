@@ -35,13 +35,17 @@ func (z *ZaiProvider) Name() string {
 	return "Zai"
 }
 
-func (z *ZaiProvider) Stream(ctx context.Context, messages []message.Message) (<-chan message.StreamEvent, error) {
+func (z *ZaiProvider) Stream(ctx context.Context, messages []message.Message, tools []message.ToolDef) (<-chan message.StreamEvent, error) {
 	ch := make(chan message.StreamEvent)
 
 	body := map[string]interface{}{
 		"model":    z.model,
 		"messages": messages,
 		"stream":   true,
+	}
+
+	if len(tools) > 0 {
+		body["tools"] = tools
 	}
 
 	jsonBody, err := json.Marshal(body)
@@ -103,6 +107,13 @@ func (z *ZaiProvider) Stream(ctx context.Context, messages []message.Message) (<
 					Delta struct {
 						Content          string `json:"content"`
 						ReasoningContent string `json:"reasoning_content"`
+						ToolCalls        []struct {
+							ID       string `json:"id"`
+							Function struct {
+								Name      string `json:"name"`
+								Arguments string `json:"arguments"`
+							} `json:"function"`
+						} `json:"tool_calls"`
 					} `json:"delta"`
 				} `json:"choices"`
 			}
@@ -112,6 +123,18 @@ func (z *ZaiProvider) Stream(ctx context.Context, messages []message.Message) (<
 			}
 			if len(chunk.Choices) == 0 {
 				continue
+			}
+
+			if len(chunk.Choices[0].Delta.ToolCalls) > 0 {
+				for _, tc := range chunk.Choices[0].Delta.ToolCalls {
+					ch <- message.StreamEvent{
+						Type:     message.StreamEventToolStart,
+						ToolName: tc.Function.Name,
+						ToolID:   tc.ID,
+						Token:    tc.Function.Arguments,
+					}
+				}
+				// continue
 			}
 
 			if chunk.Choices[0].Delta.ReasoningContent != "" {

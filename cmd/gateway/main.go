@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,25 +12,11 @@ import (
 	"github.com/devlin-ai/devlin/internal/llm"
 	"github.com/devlin-ai/devlin/internal/logger"
 	"github.com/devlin-ai/devlin/internal/message"
+
+	_ "github.com/devlin-ai/devlin/internal/tool"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/gorilla/websocket"
 )
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
-
-type incomingMessage struct {
-	Content string `json:"content"`
-}
-
-type outgoingEvent struct {
-	Type    string `json:"type"`
-	Content string `json:"content"`
-}
 
 func main() {
 	logger.Init()
@@ -92,49 +77,7 @@ func main() {
 				Timestamp: time.Now(),
 			})
 
-			ch, err := provider.Stream(context.Background(), history)
-			if err != nil {
-				log.Error("stream failed", "error", err)
-				conn.WriteJSON(outgoingEvent{
-					Type:    "error",
-					Content: err.Error(),
-				})
-				continue
-			}
-
-			var assistantText string
-			for evt := range ch {
-				switch evt.Type {
-				case message.StreamEventThinking:
-					conn.WriteJSON(outgoingEvent{
-						Type:    "thinking",
-						Content: evt.Token,
-					})
-				case message.StreamEventToken:
-					assistantText += evt.Token
-					conn.WriteJSON(outgoingEvent{
-						Type:    "token",
-						Content: evt.Token,
-					})
-				case message.StreamEventDone:
-					conn.WriteJSON(outgoingEvent{
-						Type: "done",
-					})
-				case message.StreamEventError:
-					log.Error("stream event error", "error", evt.Error)
-					conn.WriteJSON(outgoingEvent{
-						Type:    "error",
-						Content: evt.Error,
-					})
-				}
-
-			}
-
-			history = append(history, message.Message{
-				Role:      message.RoleAssistant,
-				Content:   assistantText,
-				Timestamp: time.Now(),
-			})
+			processUserMessage(conn, provider, &history)
 
 		}
 	})
