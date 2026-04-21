@@ -154,6 +154,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wsThinkingMsg:
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "assistant" {
 			m.messages[len(m.messages)-1].thinking += msg.text
+		} else if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "tool" {
+			// m.messages[len(m.messages)-1].thinking += msg.text
+			m.messages = append(m.messages, message{role: "assistant", thinking: msg.text})
 		}
 		atBottom := m.viewport.AtBottom()
 		m.viewport.SetContent(m.renderMessages())
@@ -165,6 +168,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wsTokenMsg:
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "assistant" {
 			m.messages[len(m.messages)-1].text += msg.text
+		} else if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "tool" {
+			m.messages = append(m.messages, message{role: "assistant", text: msg.text})
 		}
 		atBottom := m.viewport.AtBottom()
 		m.viewport.SetContent(m.renderMessages())
@@ -174,7 +179,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, readNext(m.conn)
 
 	case wsToolStartMsg:
-		m.messages[len(m.messages)-1].text += fmt.Sprintf("\n⚙ %s\n", msg.name)
+		m.messages = append(m.messages, message{
+			role: "tool",
+			text: fmt.Sprintf("%s\n", msg.name),
+		})
 		atBottom := m.viewport.AtBottom()
 		m.viewport.SetContent(m.renderMessages())
 		if atBottom {
@@ -182,7 +190,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, readNext(m.conn)
 	case wsToolOutputMsg:
-		m.messages[len(m.messages)-1].text += msg.text
+		if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "tool" {
+			m.messages[len(m.messages)-1].text += msg.text
+		}
 		atBottom := m.viewport.AtBottom()
 		m.viewport.SetContent(m.renderMessages())
 		if atBottom {
@@ -231,6 +241,8 @@ func (m model) renderMessages() string {
 			prefix = userStyle.Render(userPrefix)
 		} else if msg.role == "assistant" {
 			prefix = aiStyle.Render(aiPrefix)
+		} else if msg.role == "tool" {
+			prefix = toolStyle.Render(toolPrefix)
 		} else if msg.role == "error" {
 			prefix = errStyle.Render("Error: ")
 		}

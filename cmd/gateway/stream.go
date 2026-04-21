@@ -85,7 +85,8 @@ func processUserMessage(conn *websocket.Conn, provider llm.Provider, history *[]
 
 		for _, tc := range toolCalls {
 			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, message.ToolCall{
-				ID: tc.ID,
+				ID:   tc.ID,
+				Type: "function",
 				Function: struct {
 					Name      string `json:"name"`
 					Arguments string `json:"arguments"`

@@ -14,6 +14,7 @@ const (
 
 	userPrefix = "You: "
 	aiPrefix   = "Devlin: "
+	toolPrefix = "Tool: "
 	prompt     = "┃ "
 
 	scrambleLen      = 4
@@ -25,6 +26,7 @@ var (
 	promptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
 	userStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
 	aiStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
+	toolStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
