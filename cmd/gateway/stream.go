@@ -50,11 +50,18 @@ func processUserMessage(conn *websocket.Conn, provider llm.Provider, history *[]
 					Content: evt.Token,
 				})
 			case message.StreamEventToolStart:
+				toolDisp := tool.ToolDisplay{Title: evt.ToolName}
+				dispJSON, err := json.Marshal(toolDisp)
+				if err != nil {
+					logger.L().Error("failed to marshal tool display", "error", err)
+					dispJSON = []byte("{}")
+				}
 				conn.WriteJSON(outgoingEvent{
 					Type:     "tool_start",
 					Content:  evt.Token,
 					ToolName: evt.ToolName,
 					ToolID:   evt.ToolID,
+					Display:  string(dispJSON),
 				})
 
 				if evt.ToolID != "" {
@@ -109,10 +116,17 @@ func processUserMessage(conn *websocket.Conn, provider llm.Provider, history *[]
 			t, ok := tool.Get(tc.Name)
 			if !ok {
 				output := fmt.Sprintf("error: unknown tool %q", tc.Name)
+				disp := tool.ToolDisplay{Title: tc.Name, Body: []string{output}}
+				dispJSON, err := json.Marshal(disp)
+				if err != nil {
+					logger.L().Error("failed to marshal tool display", "error", err)
+					dispJSON = []byte("{}")
+				}
 				conn.WriteJSON(outgoingEvent{
 					Type:    "tool_output",
 					Content: output,
 					ToolID:  tc.ID,
+					Display: string(dispJSON),
 				})
 				conn.WriteJSON(outgoingEvent{
 					Type:   "tool_end",
@@ -133,10 +147,17 @@ func processUserMessage(conn *websocket.Conn, provider llm.Provider, history *[]
 				output = fmt.Sprintf("error: %v\n%s", err, output)
 			}
 
+			disp := t.Display(tc.Args, output)
+			dispJSON, err := json.Marshal(disp)
+			if err != nil {
+				logger.L().Error("failed to marshal tool display", "error", err)
+				dispJSON = []byte("{}")
+			}
 			conn.WriteJSON(outgoingEvent{
 				Type:    "tool_output",
 				Content: output,
 				ToolID:  tc.ID,
+				Display: string(dispJSON),
 			})
 			conn.WriteJSON(outgoingEvent{
 				Type:   "tool_end",

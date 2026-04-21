@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/devlin-ai/devlin/internal/tool"
 	"github.com/gorilla/websocket"
 )
 
@@ -17,6 +18,7 @@ type message struct {
 	role     string
 	text     string
 	thinking string
+	display  tool.ToolDisplay
 }
 
 type model struct {
@@ -180,8 +182,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wsToolStartMsg:
 		m.messages = append(m.messages, message{
-			role: "tool",
-			text: fmt.Sprintf("%s\n", msg.name),
+			role:    "tool",
+			display: msg.display,
 		})
 		atBottom := m.viewport.AtBottom()
 		m.viewport.SetContent(m.renderMessages())
@@ -191,7 +193,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, readNext(m.conn)
 	case wsToolOutputMsg:
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "tool" {
-			m.messages[len(m.messages)-1].text += msg.text
+			m.messages[len(m.messages)-1].display = msg.display
 		}
 		atBottom := m.viewport.AtBottom()
 		m.viewport.SetContent(m.renderMessages())
@@ -200,6 +202,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, readNext(m.conn)
 	case wsToolEndMsg:
+		m.messages = append(m.messages, message{role: "assistant", text: ""})
+		atBottom := m.viewport.AtBottom()
+		m.viewport.SetContent(m.renderMessages())
+		if atBottom {
+			m.viewport.GotoBottom()
+		}
 		return m, readNext(m.conn)
 
 	case wsDoneMsg:
@@ -258,6 +266,8 @@ func (m model) renderMessages() string {
 				lines[j] = dimStyle.Render(line)
 			}
 			body = strings.Join(lines, "\n"+strings.Repeat(" ", prefixW))
+		} else if msg.role == "tool" {
+			body = renderToolDisplay(msg.display, bodyW, prefixW)
 		} else {
 			wrapped := ansi.Wrap(msg.text, bodyW, " ")
 			body = strings.Join(strings.Split(wrapped, "\n"), "\n"+strings.Repeat(" ", prefixW))
@@ -289,4 +299,30 @@ func visualLineCount(ta textarea.Model) int {
 	}
 
 	return total
+}
+
+func renderToolDisplay(d tool.ToolDisplay, bodyW int, prefixW int) string {
+	indent := strings.Repeat(" ", prefixW)
+
+	var lines []string
+	if d.Title != "" {
+		lines = append(lines, dimStyle.Render(d.Title))
+	}
+	for _, entry := range d.Body {
+		lines = append(lines, strings.Split(entry, "\n")...)
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+
+	if len(lines) > toolBodyMaxLines {
+		trimmed := lines[len(lines)-toolBodyMaxLines:]
+		trimmed[0] = dimStyle.Render(fmt.Sprintf("... (%d more lines)", len(lines)-toolBodyMaxLines)) + "\n" + trimmed[0]
+		lines = trimmed
+	}
+
+	result := strings.Join(lines, "\n")
+	wrapped := ansi.Wrap(result, bodyW, " ")
+	return strings.Join(strings.Split(wrapped, "\n"), "\n"+indent)
 }

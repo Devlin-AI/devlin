@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"time"
 )
@@ -127,6 +128,41 @@ func (BashTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 
 	out, _ := json.Marshal(result)
 	return string(out), nil
+}
+
+func (BashTool) Display(args, output string) ToolDisplay {
+	var bp bashParams
+	if err := json.Unmarshal([]byte(args), &bp); err != nil {
+		return ToolDisplay{Title: "bash", Body: []string{output}}
+	}
+
+	disp := ToolDisplay{
+		Title: fmt.Sprintf("$ %s", bp.Command),
+	}
+
+	var out bashOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		if output != "" {
+			disp.Body = []string{output}
+		}
+		return disp
+	}
+
+	if out.Stdout != "" {
+		disp.Body = append(disp.Body, out.Stdout)
+	}
+	if out.Stderr != "" {
+		disp.Body = append(disp.Body, out.Stderr)
+	}
+	if len(disp.Body) == 0 {
+		if out.ExitCode != 0 {
+			disp.Body = append(disp.Body, fmt.Sprintf("(exit code %d)", out.ExitCode))
+		} else {
+			disp.Body = append(disp.Body, "(no output)")
+		}
+	}
+
+	return disp
 }
 
 func init() {

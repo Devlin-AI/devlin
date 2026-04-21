@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/devlin-ai/devlin/internal/config"
+	"github.com/devlin-ai/devlin/internal/tool"
 	"github.com/gorilla/websocket"
 )
 
@@ -19,6 +20,7 @@ type wsEvent struct {
 	Content  string `json:"content"`
 	ToolName string `json:"tool_name,omitempty"`
 	ToolID   string `json:"tool_id,omitempty"`
+	Display  string `json:"display,omitempty"`
 }
 
 type wsConnectedMsg struct{ conn *websocket.Conn }
@@ -26,9 +28,13 @@ type wsThinkingMsg struct{ text string }
 type wsTokenMsg struct{ text string }
 type wsDoneMsg struct{}
 
-type wsToolStartMsg struct{ name, id string }
-type wsToolOutputMsg struct{ text, id string }
-type wsToolEndMsg struct{ id string }
+type wsToolStartMsg struct {
+	display tool.ToolDisplay
+}
+type wsToolOutputMsg struct {
+	display tool.ToolDisplay
+}
+type wsToolEndMsg struct{}
 
 type wsErrorMsg struct{ text string }
 type scrambleTickMsg struct{}
@@ -71,11 +77,21 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 		case "done":
 			return wsDoneMsg{}
 		case "tool_start":
-			return wsToolStartMsg{name: evt.ToolName, id: evt.ToolID}
+			var disp tool.ToolDisplay
+			if evt.Display != "" {
+				json.Unmarshal([]byte(evt.Display), &disp)
+			} else {
+				disp = tool.ToolDisplay{Title: evt.ToolName}
+			}
+			return wsToolStartMsg{display: disp}
 		case "tool_output":
-			return wsToolOutputMsg{text: evt.Content, id: evt.ToolID}
+			var disp tool.ToolDisplay
+			if evt.Display != "" {
+				json.Unmarshal([]byte(evt.Display), &disp)
+			}
+			return wsToolOutputMsg{display: disp}
 		case "tool_end":
-			return wsToolEndMsg{id: evt.ToolID}
+			return wsToolEndMsg{}
 		case "error":
 			return wsErrorMsg{text: evt.Content}
 		default:
