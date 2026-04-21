@@ -1,2 +1,6 @@
 /devlin
 /gateway
+/vendor
+*.exe
+*.test
+*.out
