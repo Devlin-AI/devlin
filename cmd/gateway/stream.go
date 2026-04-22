@@ -50,18 +50,12 @@ func processUserMessage(conn *websocket.Conn, provider llm.Provider, history *[]
 					Content: evt.Token,
 				})
 			case message.StreamEventToolStart:
-				toolDisp := tool.ToolDisplay{Title: evt.ToolName}
-				dispJSON, err := json.Marshal(toolDisp)
-				if err != nil {
-					logger.L().Error("failed to marshal tool display", "error", err)
-					dispJSON = []byte("{}")
-				}
 				conn.WriteJSON(outgoingEvent{
 					Type:     "tool_start",
 					Content:  evt.Token,
 					ToolName: evt.ToolName,
 					ToolID:   evt.ToolID,
-					Display:  string(dispJSON),
+					Display:  string(marshalDisplay(tool.ToolDisplay{Title: evt.ToolName})),
 				})
 
 				if evt.ToolID != "" {
@@ -116,29 +110,43 @@ func processUserMessage(conn *websocket.Conn, provider llm.Provider, history *[]
 			t, ok := tool.Get(tc.Name)
 			if !ok {
 				output := fmt.Sprintf("error: unknown tool %q", tc.Name)
-				disp := tool.ToolDisplay{Title: tc.Name, Body: []string{output}}
-				dispJSON, err := json.Marshal(disp)
-				if err != nil {
-					logger.L().Error("failed to marshal tool display", "error", err)
-					dispJSON = []byte("{}")
-				}
-				conn.WriteJSON(outgoingEvent{
-					Type:    "tool_output",
-					Content: output,
-					ToolID:  tc.ID,
-					Display: string(dispJSON),
-				})
-				conn.WriteJSON(outgoingEvent{
-					Type:   "tool_end",
-					ToolID: tc.ID,
-				})
+				completeToolCall(conn, tc, output, tool.ToolDisplay{Title: tc.Name, Body: []string{output}}, history)
+				continue
+			}
 
-				*history = append(*history, message.Message{
-					Role:       message.RoleTool,
-					Content:    output,
-					ToolCallID: tc.ID,
-					Timestamp:  time.Now(),
-				})
+			if se, ok := t.(tool.StreamingExecutor); ok {
+				pending := ""
+				const flushAt = 100
+
+				sendPending := func() {
+					if pending == "" {
+						return
+					}
+					conn.WriteJSON(outgoingEvent{
+						Type:    "tool_output",
+						Content: pending,
+						ToolID:  tc.ID,
+						Display: "",
+					})
+					pending = ""
+				}
+
+				finalJSON, err := se.StreamingExecute(
+					context.Background(), json.RawMessage(tc.Args),
+					func(chunk string) {
+						pending += chunk
+						if len(pending) >= flushAt {
+							sendPending()
+						}
+					},
+				)
+				sendPending()
+
+				if err != nil {
+					finalJSON = fmt.Sprintf("error: %v", err)
+				}
+
+				completeToolCall(conn, tc, finalJSON, t.Display(tc.Args, finalJSON), history)
 				continue
 			}
 
@@ -147,31 +155,37 @@ func processUserMessage(conn *websocket.Conn, provider llm.Provider, history *[]
 				output = fmt.Sprintf("error: %v\n%s", err, output)
 			}
 
-			disp := t.Display(tc.Args, output)
-			dispJSON, err := json.Marshal(disp)
-			if err != nil {
-				logger.L().Error("failed to marshal tool display", "error", err)
-				dispJSON = []byte("{}")
-			}
-			conn.WriteJSON(outgoingEvent{
-				Type:    "tool_output",
-				Content: output,
-				ToolID:  tc.ID,
-				Display: string(dispJSON),
-			})
-			conn.WriteJSON(outgoingEvent{
-				Type:   "tool_end",
-				ToolID: tc.ID,
-			})
-
-			*history = append(*history, message.Message{
-				Role:       message.RoleTool,
-				Content:    output,
-				ToolCallID: tc.ID,
-				Timestamp:  time.Now(),
-			})
+			completeToolCall(conn, tc, output, t.Display(tc.Args, output), history)
 		}
 	}
+}
+
+func completeToolCall(conn *websocket.Conn, tc toolCall, output string, disp tool.ToolDisplay, history *[]message.Message) {
+	conn.WriteJSON(outgoingEvent{
+		Type:    "tool_output",
+		Content: output,
+		ToolID:  tc.ID,
+		Display: string(marshalDisplay(disp)),
+	})
+	conn.WriteJSON(outgoingEvent{
+		Type:   "tool_end",
+		ToolID: tc.ID,
+	})
+	*history = append(*history, message.Message{
+		Role:       message.RoleTool,
+		Content:    output,
+		ToolCallID: tc.ID,
+		Timestamp:  time.Now(),
+	})
+}
+
+func marshalDisplay(disp tool.ToolDisplay) []byte {
+	b, err := json.Marshal(disp)
+	if err != nil {
+		logger.L().Error("failed to marshal tool display", "error", err)
+		return []byte("{}")
+	}
+	return b
 }
 
 func buildToolDefs() []message.ToolDef {

@@ -40,6 +40,9 @@ github.com/clipperhouse/stringish
 # github.com/clipperhouse/uax29/v2 v2.5.0
 ## explicit; go 1.18
 github.com/clipperhouse/uax29/v2/graphemes
+# github.com/creack/pty v1.1.24
+## explicit; go 1.18
+github.com/creack/pty
 # github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f
 ## explicit; go 1.16
 github.com/erikgeiser/coninput

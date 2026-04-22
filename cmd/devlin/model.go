@@ -15,10 +15,11 @@ import (
 )
 
 type message struct {
-	role     string
-	text     string
-	thinking string
-	display  tool.ToolDisplay
+	role       string
+	text       string
+	thinking   string
+	display    tool.ToolDisplay
+	rawContent string
 }
 
 type model struct {
@@ -112,10 +113,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea.SetWidth(msg.Width)
 		m.windowHeight = msg.Height
 
-		m.viewport.SetContent(m.renderMessages())
-		if m.viewport.AtBottom() {
-			m.viewport.GotoBottom()
-		}
+		refreshView(&m)
 		return m, tea.Batch(cmds...)
 
 	case tea.MouseMsg:
@@ -146,25 +144,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.scrambleFrame++
-		atBottom := m.viewport.AtBottom()
-		m.viewport.SetContent(m.renderMessages())
-		if atBottom {
-			m.viewport.GotoBottom()
-		}
+		refreshView(&m)
 		return m, scrambleTick()
 
 	case wsThinkingMsg:
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "assistant" {
 			m.messages[len(m.messages)-1].thinking += msg.text
 		} else if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "tool" {
-			// m.messages[len(m.messages)-1].thinking += msg.text
 			m.messages = append(m.messages, message{role: "assistant", thinking: msg.text})
 		}
-		atBottom := m.viewport.AtBottom()
-		m.viewport.SetContent(m.renderMessages())
-		if atBottom {
-			m.viewport.GotoBottom()
-		}
+		refreshView(&m)
 		return m, readNext(m.conn)
 
 	case wsTokenMsg:
@@ -173,11 +162,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "tool" {
 			m.messages = append(m.messages, message{role: "assistant", text: msg.text})
 		}
-		atBottom := m.viewport.AtBottom()
-		m.viewport.SetContent(m.renderMessages())
-		if atBottom {
-			m.viewport.GotoBottom()
-		}
+		refreshView(&m)
 		return m, readNext(m.conn)
 
 	case wsToolStartMsg:
@@ -185,49 +170,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			role:    "tool",
 			display: msg.display,
 		})
-		atBottom := m.viewport.AtBottom()
-		m.viewport.SetContent(m.renderMessages())
-		if atBottom {
-			m.viewport.GotoBottom()
-		}
+		refreshView(&m)
 		return m, readNext(m.conn)
 	case wsToolOutputMsg:
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "tool" {
-			m.messages[len(m.messages)-1].display = msg.display
+			m.messages[len(m.messages)-1].rawContent += msg.content
+			if msg.display.Title != "" || len(msg.display.Body) > 0 {
+				m.messages[len(m.messages)-1].display = msg.display
+			}
 		}
-		atBottom := m.viewport.AtBottom()
-		m.viewport.SetContent(m.renderMessages())
-		if atBottom {
-			m.viewport.GotoBottom()
-		}
+		refreshView(&m)
 		return m, readNext(m.conn)
 	case wsToolEndMsg:
-		m.messages = append(m.messages, message{role: "assistant", text: ""})
-		atBottom := m.viewport.AtBottom()
-		m.viewport.SetContent(m.renderMessages())
-		if atBottom {
-			m.viewport.GotoBottom()
+		if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "tool" {
+			m.messages[len(m.messages)-1].rawContent = ""
 		}
+		m.messages = append(m.messages, message{role: "assistant", text: ""})
+		refreshView(&m)
 		return m, readNext(m.conn)
 
 	case wsDoneMsg:
 		m.streaming = false
-		atBottom := m.viewport.AtBottom()
-		m.viewport.SetContent(m.renderMessages())
-		if atBottom {
-			m.viewport.GotoBottom()
-		}
+		refreshView(&m)
 		return m, readNext(m.conn)
 
 	case wsErrorMsg:
 		m.streaming = false
 		m.messages = append(m.messages, message{role: "error", text: msg.text})
 		m.viewport.Height = m.windowHeight - m.textarea.Height() - dividerHeight
-		atBottom := m.viewport.AtBottom()
-		m.viewport.SetContent(m.renderMessages())
-		if atBottom {
-			m.viewport.GotoBottom()
-		}
+		refreshView(&m)
 		return m, readNext(m.conn)
 	}
 
@@ -267,7 +238,11 @@ func (m model) renderMessages() string {
 			}
 			body = strings.Join(lines, "\n"+strings.Repeat(" ", prefixW))
 		} else if msg.role == "tool" {
-			body = renderToolDisplay(msg.display, bodyW, prefixW)
+			if msg.rawContent != "" {
+				body = renderStreamingTool(msg.display.Title, msg.rawContent, bodyW, prefixW)
+			} else {
+				body = renderToolDisplay(msg.display, bodyW, prefixW)
+			}
 		} else {
 			wrapped := ansi.Wrap(msg.text, bodyW, " ")
 			body = strings.Join(strings.Split(wrapped, "\n"), "\n"+strings.Repeat(" ", prefixW))
@@ -301,28 +276,10 @@ func visualLineCount(ta textarea.Model) int {
 	return total
 }
 
-func renderToolDisplay(d tool.ToolDisplay, bodyW int, prefixW int) string {
-	indent := strings.Repeat(" ", prefixW)
-
-	var lines []string
-	if d.Title != "" {
-		lines = append(lines, dimStyle.Render(d.Title))
+func refreshView(m *model) {
+	atBottom := m.viewport.AtBottom()
+	m.viewport.SetContent(m.renderMessages())
+	if atBottom {
+		m.viewport.GotoBottom()
 	}
-	for _, entry := range d.Body {
-		lines = append(lines, strings.Split(entry, "\n")...)
-	}
-
-	if len(lines) == 0 {
-		return ""
-	}
-
-	if len(lines) > toolBodyMaxLines {
-		trimmed := lines[len(lines)-toolBodyMaxLines:]
-		trimmed[0] = dimStyle.Render(fmt.Sprintf("... (%d more lines)", len(lines)-toolBodyMaxLines)) + "\n" + trimmed[0]
-		lines = trimmed
-	}
-
-	result := strings.Join(lines, "\n")
-	wrapped := ansi.Wrap(result, bodyW, " ")
-	return strings.Join(strings.Split(wrapped, "\n"), "\n"+indent)
 }

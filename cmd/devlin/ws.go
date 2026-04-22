@@ -32,6 +32,7 @@ type wsToolStartMsg struct {
 	display tool.ToolDisplay
 }
 type wsToolOutputMsg struct {
+	content string
 	display tool.ToolDisplay
 }
 type wsToolEndMsg struct{}
@@ -89,7 +90,7 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 			if evt.Display != "" {
 				json.Unmarshal([]byte(evt.Display), &disp)
 			}
-			return wsToolOutputMsg{display: disp}
+			return wsToolOutputMsg{content: evt.Content, display: disp}
 		case "tool_end":
 			return wsToolEndMsg{}
 		case "error":

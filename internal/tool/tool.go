@@ -18,3 +18,7 @@ type Tool interface {
 	Execute(ctx context.Context, args json.RawMessage) (string, error)
 	Display(args, output string) ToolDisplay
 }
+
+type StreamingExecutor interface {
+	StreamingExecute(ctx context.Context, args json.RawMessage, onChunk func(chunk string)) (string, error)
+}

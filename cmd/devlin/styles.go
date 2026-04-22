@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	textareaMaxHeight = 5
-	dividerHeight     = 1
-	toolBodyMaxLines  = 5
+	textareaMaxHeight         = 5
+	dividerHeight             = 1
+	toolBodyMaxLines          = 5
+	toolBodyStreamingMaxLines = 10
 
 	userPrefix = "You: "
 	aiPrefix   = "Devlin: "

@@ -4,8 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"strings"
+	"sync"
+	"syscall"
 	"time"
+
+	"github.com/creack/pty"
 )
 
 type BashTool struct{}
@@ -57,12 +63,7 @@ func (BashTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 		return "", err
 	}
 
-	timeout := time.Duration(120) * time.Second
-	if params.Timeout > 0 {
-		timeout = time.Duration(params.Timeout) * time.Second
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, params.timeout())
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "bash", "-c", params.Command)
@@ -167,4 +168,96 @@ func (BashTool) Display(args, output string) ToolDisplay {
 
 func init() {
 	Register(&BashTool{})
+}
+
+func (p bashParams) timeout() time.Duration {
+	if p.Timeout > 0 {
+		return time.Duration(p.Timeout) * time.Second
+	}
+	return 120 * time.Second
+}
+
+func (BashTool) StreamingExecute(ctx context.Context, args json.RawMessage, onChunk func(chunk string)) (string, error) {
+	var params bashParams
+	if err := json.Unmarshal(args, &params); err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, params.timeout())
+	defer cancel()
+
+	env := os.Environ()
+	found := false
+	for i, e := range env {
+		if strings.HasPrefix(e, "TERM=") {
+			env[i] = "TERM=xterm-256color"
+			found = true
+			break
+		}
+	}
+	if !found {
+		env = append(env, "TERM=xterm-256color")
+	}
+
+	cmd := exec.Command("bash", "-c", params.Command)
+	cmd.Env = env
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return "", fmt.Errorf("pty.Start: %w", err)
+	}
+	defer ptmx.Close()
+
+	var stdout []byte
+	var wg sync.WaitGroup
+
+	buf := make([]byte, 4096)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			n, err := ptmx.Read(buf)
+			if n > 0 {
+				chunk := string(buf[:n])
+				onChunk(chunk)
+				stdout = append(stdout, buf[:n]...)
+			}
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		cmd.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+		cmd.Process.Kill()
+		<-done
+	case <-done:
+	}
+
+	wg.Wait()
+
+	result := bashOutput{
+		ExitCode: -1,
+		Stdout:   string(stdout),
+	}
+
+	if cmd.ProcessState != nil {
+		if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok {
+			result.ExitCode = ws.ExitStatus()
+		}
+	}
+
+	if ctx.Err() == context.DeadlineExceeded {
+		result.TimedOut = true
+	}
+
+	out, _ := json.Marshal(result)
+	return string(out), nil
 }

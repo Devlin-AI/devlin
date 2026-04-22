@@ -863,15 +863,6 @@ func (m *Model) repositionView() {
 	} else if row > maximum {
 		m.viewport.ScrollDown(row - maximum)
 	}
-
-	totalLines := 0
-	for i := range m.value {
-		totalLines += len(m.memoizedWrap(m.value[i], m.width))
-	}
-	maxYOffset := max(0, totalLines-m.viewport.Height)
-	if m.viewport.YOffset > maxYOffset {
-		m.viewport.YOffset = maxYOffset
-	}
 }
 
 // Width returns the width of the textarea.
