@@ -37,18 +37,20 @@ type readOutput struct {
 	Truncated bool   `json:"truncated"`
 }
 
-const readDescription = `Read a file or directory from the local filesystem. If the path does not exist, an error is returned. Use this tool to explore codebases, inspect files, and understand project structure.
+const readDescription = `Read a file or directory from the local filesystem. If the path does not exist, an error is returned.
 
-Usage notes:
-- The filePath parameter must be an absolute path (not a relative path)
-- By default, this tool returns up to 2000 lines starting from the beginning of the file
-- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
-- Any line longer than 2000 characters will be truncated
-- Results are returned using line numbers with 1-based indexing
-- Output is capped at 50 KB. If the file is larger, use offset to read beyond the cap
-- For exploring directories, this tool lists entries with trailing / for subdirectories
-- When searching for code, consider using the grep or glob tools instead for better performance
-- You can call multiple read operations in parallel by making multiple tool calls`
+Usage:
+- The filePath parameter should be an absolute path.
+- By default, this tool returns up to 2000 lines from the start of the file.
+- The offset parameter is the line number to start from (1-indexed).
+- To read later sections, call this tool again with a larger offset.
+- Use the grep tool to find specific content in large files or files with long lines.
+- If you are unsure of the correct file path, use the glob tool to look up filenames by glob pattern.
+- Contents are returned with each line prefixed by its line number as '<line>: <content>'. For example, if a file has contents "foo\n", you will receive "1: foo\n". For directories, entries are returned one per line (without line numbers) with a trailing '/' for subdirectories.
+- Any line longer than 2000 characters is truncated.
+- Output is capped at 50 KB. If the file is larger, use offset to read beyond the cap.
+- Call this tool in parallel when you know there are multiple files you want to read.
+- Avoid tiny repeated slices (30 line chunks). If you need more context, read a larger window.`
 
 const readParameters = `{
 	"type": "object",
