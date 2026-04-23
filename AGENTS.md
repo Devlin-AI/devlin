@@ -1,21 +1,21 @@
 # AGENTS.md
 
-## Project overview
-
-Go chat application with a Bubble Tea TUI client and a WebSocket gateway server. The TUI streams LLM responses through the gateway over WebSocket.
-
 ## Building
 
 ```sh
-go build -o devlin ./cmd/devlin
-go build -o gateway ./cmd/gateway
+make                  # build both binaries
+make devlin           # build TUI client only
+make gateway          # build gateway server only
+make vet              # go vet ./...
 ```
 
-Root `main.go` is a placeholder — real entrypoints are under `cmd/`.
+Root `main.go` is a placeholder. Real entrypoints are `cmd/devlin/main.go` and `cmd/gateway/main.go`.
+
+No tests exist yet.
 
 ## Running
 
-The gateway must be running before the client. Config is loaded from `~/.devlin/config.json` (must exist for both binaries). Example shape:
+Gateway must be running before the TUI client. Both read `~/.devlin/config.json` (must exist):
 
 ```json
 {
@@ -29,28 +29,27 @@ The gateway must be running before the client. Config is loaded from `~/.devlin/
 }
 ```
 
-The TUI logs to `~/.devlin/devlin.log`. The gateway logs to stdout.
+TUI logs to `~/.devlin/devlin.log`. Gateway logs to stdout.
 
 ## Architecture
 
-- `cmd/devlin/` — TUI client (Bubble Tea + Lipgloss). Connects to gateway via WebSocket on init. Supports streaming tokens, thinking/reasoning display, and a scramble animation during streaming.
-- `cmd/gateway/` — HTTP server (Chi + Gorilla WebSocket). Receives user messages over `/ws`, streams LLM responses back as JSON events (`token`, `thinking`, `done`, `error`).
-- `internal/llm/` — Provider interface + registry. Providers self-register via `init()`. Currently only `zai-coding-plan` (OpenAI-compatible SSE API at `api.z.ai`).
-- `internal/message/` — Shared `Message` and `StreamEvent` types used by both client and gateway.
-- `internal/config/` — Loads config from `~/.devlin/config.json`.
-- `internal/logger/` — Centralized `log/slog` wrapper. Both binaries call `logger.Init()` at startup. Internal packages use `logger.L()` to get the default logger. Defaults to discard if `Init()` is never called, so internal packages are safe to use from any context.
-- `internal/channel/` — Adapter interface for alternative input/output channels (not yet wired into binaries).
+Two binaries communicating over WebSocket (`/ws`):
 
-## Key conventions
+- **`cmd/devlin/`** — Bubble Tea TUI. Files: `model.go` (Update loop), `ws.go` (WebSocket commands/events), `render.go` (message rendering helpers), `styles.go` (style constants).
+- **`cmd/gateway/`** — Chi HTTP server. `stream.go` drives the LLM loop (stream tokens, dispatch tool calls, stream results back). `ws.go` handles WebSocket upgrade.
+- **`internal/tool/`** — Tool interface + registry. `tool.go` defines `Tool` and `StreamingExecutor` interfaces. Tools self-register via `init()` in their own file (e.g. `bash.go`).
+- **`internal/llm/`** — LLM provider interface + registry. Same pattern: providers self-register via `init()`. Currently only `zai-coding-plan` (OpenAI-compatible SSE at `api.z.ai`).
+- **`internal/message/`** — Shared `Message`, `StreamEvent`, `ToolDef` types used by both binaries.
+- **`internal/config/`** — Loads `~/.devlin/config.json`.
+- **`internal/logger/`** — `log/slog` wrapper. Binaries call `logger.Init()` at startup; internal packages use `logger.L()`. Safe to call without `Init()` (defaults to discard).
+- **`internal/channel/`** — Adapter interface for alt I/O channels (not yet wired).
 
-- The `llm.Provider` interface uses a registry pattern: new providers call `llm.Register()` in an `init()` function in a new file within `internal/llm/`.
-- The `model` config field is split on `/` — the first part is the provider name, the second is the model name (e.g. `zai-coding-plan/glm-5.1`).
-- All logging goes through `internal/logger`. Do not use `log` stdlib or `fmt.Println` for logging. Use `logger.L().Info/Error/Warn/Debug` with structured key-value pairs.
-- No tests exist yet.
+## Conventions
 
-## Dependencies
-
-- [Bubble Tea](https://github.com/charmbracelet/bubbletea) — TUI framework
-- [Lipgloss](https://github.com/charmbracelet/lipgloss) — terminal styling
-- [Chi](https://github.com/go-chi/chi) — HTTP router (gateway only)
-- [Gorilla WebSocket](https://github.com/gorilla/websocket) — WebSocket transport
+- **Logging**: Always use `internal/logger` (`logger.L().Info/Error/Warn/Debug` with key-value pairs). Never use `log` stdlib or `fmt.Println` for logging.
+- **No comments**: Do not add comments to code unless explicitly asked.
+- **Provider registry**: New LLM providers call `llm.Register()` in an `init()` function in a new file within `internal/llm/`.
+- **Tool registry**: New tools call `tool.Register()` in an `init()` function in a new file within `internal/tool/`. Implement `Tool` interface. Optionally implement `StreamingExecutor` for streaming output (e.g. PTY-based bash).
+- **Model naming**: Config `model` field is `provider/model` (e.g. `zai-coding-plan/glm-5.1`). Split on `/` — first part is provider name, second is model name.
+- **WebSocket events**: `token`, `thinking`, `tool_start`, `tool_output`, `tool_end`, `done`, `error`. All JSON with `type` field.
+- **Vendor dir**: Exists locally but is gitignored. `go build` works without it via module cache.
