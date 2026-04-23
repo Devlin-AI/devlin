@@ -125,6 +125,8 @@ func (ReadTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 		return "", fmt.Errorf("cannot read binary file: %s", fp)
 	}
 
+	tracker.Store(fp, stat.ModTime().Unix())
+
 	return readFile(fp, params.Offset, params.Limit)
 }
 
