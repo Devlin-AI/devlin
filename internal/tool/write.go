@@ -63,7 +63,7 @@ func (WriteTool) Execute(ctx context.Context, args json.RawMessage) (string, err
 		return "", fmt.Errorf("filePath is required")
 	}
 
-	fp := params.FilePath
+	fp := expandHome(params.FilePath)
 	if !filepath.IsAbs(fp) {
 		cwd, err := os.Getwd()
 		if err != nil {

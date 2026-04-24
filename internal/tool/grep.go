@@ -102,7 +102,7 @@ func (GrepTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 		return "", err
 	}
 
-	searchDir := params.Path
+	searchDir := expandHome(params.Path)
 	if searchDir == "" {
 		cwd, err := filepath.Abs(".")
 		if err != nil {

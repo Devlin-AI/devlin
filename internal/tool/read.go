@@ -96,7 +96,7 @@ func (ReadTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 		return "", fmt.Errorf("offset must be greater than or equal to 1")
 	}
 
-	fp := params.FilePath
+	fp := expandHome(params.FilePath)
 	if !filepath.IsAbs(fp) {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -420,6 +420,20 @@ func suggestSimilarPath(path string) (string, error) {
 	}
 
 	return "", fmt.Errorf("File not found: %s", path)
+}
+
+func expandHome(fp string) string {
+	if fp == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	}
+	if strings.HasPrefix(fp, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, fp[2:])
+		}
+	}
+	return fp
 }
 
 func relPath(path string) string {

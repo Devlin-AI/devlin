@@ -81,7 +81,7 @@ func (EditTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 		return "", fmt.Errorf("No changes to apply: oldString and newString are identical.")
 	}
 
-	fp := params.FilePath
+	fp := expandHome(params.FilePath)
 	if !filepath.IsAbs(fp) {
 		cwd, err := os.Getwd()
 		if err != nil {
