@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/devlin-ai/devlin/internal/config"
 	"github.com/devlin-ai/devlin/internal/llm"
 	"github.com/devlin-ai/devlin/internal/logger"
-	"github.com/devlin-ai/devlin/internal/message"
+	"github.com/devlin-ai/devlin/internal/session"
 
 	_ "github.com/devlin-ai/devlin/internal/tool"
 	"github.com/go-chi/chi/v5"
@@ -45,6 +45,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	home, _ := os.UserHomeDir()
+	dbPath := filepath.Join(home, ".devlin", "devlin.db")
+	store, err := session.NewStore(dbPath)
+	if err != nil {
+		log.Error("failed to open store", "error", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
@@ -57,7 +66,20 @@ func main() {
 		}
 		defer conn.Close()
 
-		var history []message.Message
+		sess, err := session.New(provider, store, "tui", modelName, func(evt session.Event) {
+			conn.WriteJSON(outgoingEvent{
+				Type:     evt.Type,
+				Content:  evt.Content,
+				ToolName: evt.ToolName,
+				ToolID:   evt.ToolID,
+				Display:  evt.Display,
+			})
+		})
+		if err != nil {
+			log.Error("failed to create session", "error", err)
+			return
+		}
+
 		for {
 			_, raw, err := conn.ReadMessage()
 			if err != nil {
@@ -71,14 +93,7 @@ func main() {
 				continue
 			}
 
-			history = append(history, message.Message{
-				Role:      message.RoleUser,
-				Content:   msg.Content,
-				Timestamp: time.Now(),
-			})
-
-			processUserMessage(conn, provider, &history)
-
+			sess.ProcessMessage(msg.Content)
 		}
 	})
 

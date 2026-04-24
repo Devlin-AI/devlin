@@ -3,10 +3,10 @@
 all: devlin gateway
 
 devlin:
-	go build -o devlin ./cmd/devlin
+	go build -mod=mod -o devlin ./cmd/devlin
 
 gateway:
-	go build -o gateway ./cmd/gateway
+	go build -mod=mod -o gateway ./cmd/gateway
 
 run-gateway: gateway
 	./gateway
@@ -21,4 +21,4 @@ fmt:
 	gofmt -w .
 
 vet:
-	go vet ./...
+	go vet -mod=mod ./...

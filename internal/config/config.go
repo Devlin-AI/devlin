@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/devlin-ai/devlin/internal/logger"
 )
@@ -11,6 +12,11 @@ import (
 type Config struct {
 	Gateway GatewayConfig `json:"gateway"`
 	LLM     LLMConfig     `json:"llm"`
+	Session SessionConfig `json:"session"`
+}
+
+type SessionConfig struct {
+	IdleTimeout string `json:"idle_timeout"`
 }
 
 type GatewayConfig struct {
@@ -24,6 +30,17 @@ type LLMConfig struct {
 
 type LLMProviderConfig struct {
 	APIKey string `json:"api_key"`
+}
+
+func (c *SessionConfig) IdleTimeoutDuration() time.Duration {
+	if c.IdleTimeout == "" {
+		return 30 * time.Minute
+	}
+	d, err := time.ParseDuration(c.IdleTimeout)
+	if err != nil {
+		return 30 * time.Minute
+	}
+	return d
 }
 
 func Load() (*Config, error) {
