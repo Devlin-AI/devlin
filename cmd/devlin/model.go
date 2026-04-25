@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/devlin-ai/devlin/internal/tool"
@@ -21,6 +22,7 @@ type message struct {
 	thinking   string
 	display    tool.ToolDisplay
 	rawContent string
+	mdBody     string
 }
 
 type model struct {
@@ -33,6 +35,8 @@ type model struct {
 	err           error
 	conn          *websocket.Conn
 	scrambleFrame int
+	mdRenderer    *glamour.TermRenderer
+	mdWidth       int
 }
 
 func initialModel() model {
@@ -152,6 +156,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea.SetWidth(msg.Width)
 		m.windowHeight = msg.Height
 
+		newWidth := msg.Width - aiPrefixW
+		if newWidth != m.mdWidth {
+			m.mdWidth = newWidth
+			m.mdRenderer = newMDRenderer(m.mdWidth)
+			m.renderAllMarkdown(true)
+		}
+
 		refreshView(&m)
 		return m, tea.Batch(cmds...)
 
@@ -176,6 +187,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wsConnectedMsg:
 		m.conn = msg.conn
+		m.mdWidth = m.viewport.Width - aiPrefixW
+		m.mdRenderer = newMDRenderer(m.mdWidth)
 		return m, readNext(m.conn)
 
 	case scrambleTickMsg:
@@ -230,11 +243,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wsCancelledMsg:
 		m.streaming = false
+		m.renderAllMarkdown(false)
 		refreshView(&m)
 		return m, readNext(m.conn)
 
 	case wsDoneMsg:
 		m.streaming = false
+		m.renderAllMarkdown(false)
 		refreshView(&m)
 		return m, readNext(m.conn)
 
@@ -280,7 +295,9 @@ func (m model) renderMessages() string {
 		bodyW := w - prefixW
 
 		var body string
-		if msg.role == "assistant" && msg.thinking != "" && msg.text == "" {
+		if msg.role == "assistant" && msg.mdBody != "" {
+			body = strings.Join(strings.Split(msg.mdBody, "\n"), "\n"+strings.Repeat(" ", prefixW))
+		} else if msg.role == "assistant" && msg.thinking != "" && msg.text == "" {
 			wrapped := ansi.Wrap(msg.thinking, bodyW, " ")
 			lines := strings.Split(wrapped, "\n")
 			for j, line := range lines {
@@ -331,5 +348,24 @@ func refreshView(m *model) {
 	m.viewport.SetContent(m.renderMessages())
 	if atBottom {
 		m.viewport.GotoBottom()
+	}
+}
+
+func (m *model) renderAllMarkdown(force bool) {
+	if m.mdRenderer == nil {
+		return
+	}
+	for i := range m.messages {
+		if m.messages[i].role != "assistant" || m.messages[i].text == "" {
+			continue
+		}
+		if !force && m.messages[i].mdBody != "" {
+			continue
+		}
+		rendered, err := m.mdRenderer.Render(m.messages[i].text)
+		if err != nil {
+			continue
+		}
+		m.messages[i].mdBody = strings.TrimRight(rendered, "\n")
 	}
 }

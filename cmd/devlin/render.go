@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/devlin-ai/devlin/internal/tool"
 )
@@ -72,3 +73,30 @@ func renderLines(lines []string, maxLines int, bodyW int, prefixW int) string {
 	wrapped := ansi.Wrap(result, bodyW, " ")
 	return strings.Join(strings.Split(wrapped, "\n"), "\n"+indent)
 }
+
+func newMDRenderer(width int) *glamour.TermRenderer {
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle(mdStyle),
+		glamour.WithWordWrap(width),
+		glamour.WithStylesFromJSONBytes([]byte(mdStyleOverrides)),
+	)
+	if err != nil {
+		return nil
+	}
+	return r
+}
+
+const mdStyleOverrides = `{
+  "document": {
+    "margin": 0,
+    "block_prefix": "",
+    "block_suffix": ""
+  },
+  "code_block": {
+    "margin": 0
+  },
+  "code": {
+    "prefix": " ",
+    "suffix": " "
+  }
+}`

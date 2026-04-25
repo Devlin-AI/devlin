@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 const (
@@ -31,7 +32,16 @@ var (
 	toolStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+	aiPrefixW = lipgloss.Width(aiStyle.Render(aiPrefix))
+	mdStyle   = "dark"
 )
+
+func init() {
+	if !termenv.HasDarkBackground() {
+		mdStyle = "light"
+	}
+}
 
 func scramble(frame int) string {
 	var b strings.Builder
