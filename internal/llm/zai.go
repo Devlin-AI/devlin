@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/devlin-ai/devlin/internal/logger"
@@ -82,7 +84,15 @@ func (z *ZaiProvider) Stream(ctx context.Context, messages []message.Message, to
 		}()
 
 		if resp.StatusCode != http.StatusOK {
-			log.Error("unexpected status code", "status", resp.StatusCode)
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			log.Error("unexpected status code", "status", resp.StatusCode, "body", string(body))
+			ch <- message.StreamEvent{
+				Type:       message.StreamEventError,
+				Error:      fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body)),
+				StatusCode: resp.StatusCode,
+			}
+			return
 		}
 
 		scanner := bufio.NewScanner(resp.Body)

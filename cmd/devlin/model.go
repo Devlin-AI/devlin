@@ -28,17 +28,20 @@ type message struct {
 }
 
 type model struct {
-	viewport      viewport.Model
-	textarea      textarea.Model
-	windowHeight  int
-	messages      []message
-	streaming     bool
-	cancelPending bool
-	err           error
-	conn          *websocket.Conn
-	scrambleFrame int
-	mdRenderer    *glamour.TermRenderer
-	mdWidth       int
+	viewport         viewport.Model
+	textarea         textarea.Model
+	windowHeight     int
+	messages         []message
+	streaming        bool
+	cancelPending    bool
+	err              error
+	conn             *websocket.Conn
+	scrambleFrame    int
+	mdRenderer       *glamour.TermRenderer
+	mdWidth          int
+	reconnecting     bool
+	reconnectDots    int
+	reconnectAttempt int
 }
 
 func initialModel() model {
@@ -189,6 +192,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wsConnectedMsg:
 		m.conn = msg.conn
+		if m.reconnecting {
+			m.reconnecting = false
+			m.reconnectDots = 0
+			m.reconnectAttempt = 0
+			m.textarea.Placeholder = "Send a new message..."
+			m.textarea.Focus()
+		}
 		m.mdWidth = m.viewport.Width - aiPrefixW
 		m.mdRenderer = newMDRenderer(m.mdWidth)
 		return m, readNext(m.conn)
@@ -264,11 +274,57 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, readNext(m.conn)
 
 	case wsErrorMsg:
+		if isConnectionError(msg.text) {
+			m.conn = nil
+			if !m.reconnecting {
+				m.reconnecting = true
+				m.reconnectDots = 0
+				m.reconnectAttempt = 0
+				m.streaming = false
+				m.textarea.Blur()
+				m.textarea.Placeholder = "Reconnecting."
+				refreshView(&m)
+				return m, tea.Batch(reconnectTick(), reconnectAttemptAfter(reconnectInitialDelay))
+			}
+			m.reconnectAttempt++
+			delay := reconnectBackoff(m.reconnectAttempt)
+			m.textarea.Placeholder = "Reconnecting."
+			m.reconnectDots = 0
+			refreshView(&m)
+			return m, tea.Batch(reconnectTick(), reconnectAttemptAfter(delay))
+		}
 		m.streaming = false
 		m.messages = append(m.messages, message{role: "error", text: msg.text})
 		m.viewport.Height = m.windowHeight - m.textarea.Height() - dividerHeight
 		refreshView(&m)
 		return m, readNext(m.conn)
+
+	case wsStatusMsg:
+		if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "status" {
+			m.messages[len(m.messages)-1].text = msg.text
+		} else {
+			m.messages = append(m.messages, message{role: "status", text: msg.text})
+		}
+		refreshView(&m)
+		if m.conn != nil {
+			return m, readNext(m.conn)
+		}
+		return m, nil
+
+	case reconnectTickMsg:
+		if !m.reconnecting {
+			return m, nil
+		}
+		m.reconnectDots = (m.reconnectDots + 1) % 4
+		m.textarea.Placeholder = "Reconnecting" + strings.Repeat(".", m.reconnectDots)
+		refreshView(&m)
+		return m, reconnectTick()
+
+	case reconnectAttemptMsg:
+		if !m.reconnecting {
+			return m, nil
+		}
+		return m, dialGateway()
 
 	case cancelResetMsg:
 		m.cancelPending = false
@@ -282,7 +338,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	divider := strings.Repeat("—", m.viewport.Width)
-	return fmt.Sprintf("%s\n%s\n%s", m.viewport.View(), dimStyle.Render(divider), promptStyle.Render(m.textarea.View()))
+	input := promptStyle.Render(m.textarea.View())
+	if m.reconnecting {
+		input = dimStyle.Render(prompt + m.textarea.Placeholder)
+	}
+	return fmt.Sprintf("%s\n%s\n%s", m.viewport.View(), dimStyle.Render(divider), input)
 }
 
 func (m model) renderMessages() string {
@@ -303,6 +363,8 @@ func (m model) renderMessages() string {
 			prefix = toolStyle.Render(toolPrefix)
 		} else if msg.role == "error" {
 			prefix = errStyle.Render("Error: ")
+		} else if msg.role == "status" {
+			prefix = dimStyle.Render("Status: ")
 		}
 
 		prefixW := lipgloss.Width(prefix)

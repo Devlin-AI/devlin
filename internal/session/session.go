@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"sync"
 	"time"
@@ -97,6 +98,22 @@ func (s *Session) sendEvent(evt Event) {
 	}
 }
 
+const maxProviderRetries = 8
+
+func isRetryableStatus(code int) bool {
+	return code == 429 || code == 500 || code == 502 || code == 503
+}
+
+func retryBackoff(attempt int) time.Duration {
+	base := 2 * time.Second
+	delay := base * time.Duration(1<<uint(attempt))
+	jitter := time.Duration(float64(delay) * 0.2 * rand.Float64())
+	if delay > 256*time.Second {
+		delay = 256 * time.Second
+	}
+	return delay + jitter
+}
+
 func (s *Session) processLoop() {
 	toolDefs := buildToolDefs()
 
@@ -114,61 +131,106 @@ func (s *Session) processLoop() {
 			}, messages...)
 		}
 
-		ch, err := s.provider.Stream(ctx, messages, toolDefs)
-		if err != nil {
-			if ctx.Err() != nil {
-				s.sendEvent(Event{Type: "cancelled"})
-				s.history = s.history[:len(s.history)-1]
-			} else {
-				logger.L().Error("stream failed", "error", err)
-				s.sendEvent(Event{Type: "error", Content: err.Error()})
-			}
-			s.setCancel(nil)
-			return
-		}
-
 		var assistantText string
 		var thinkingText string
 		var toolCalls []toolCall
+		var streamErr error
 
-		for evt := range ch {
-			switch evt.Type {
-			case message.StreamEventToken:
-				assistantText += evt.Token
-				s.sendEvent(Event{Type: "token", Content: evt.Token})
-			case message.StreamEventThinking:
-				thinkingText += evt.Token
-				s.sendEvent(Event{Type: "thinking", Content: evt.Token})
-			case message.StreamEventToolStart:
-				display := string(marshalToolCallDisplay(tool.ToolDisplay{}))
-				s.sendEvent(Event{
-					Type:     "tool_start",
-					Content:  evt.Token,
-					ToolName: evt.ToolName,
-					ToolID:   evt.ToolID,
-					Display:  display,
-				})
-
-				if evt.ToolID != "" {
-					toolCalls = append(toolCalls, toolCall{
-						ID:   evt.ToolID,
-						Name: evt.ToolName,
-						Args: evt.Token,
-					})
-				} else if len(toolCalls) > 0 {
-					toolCalls[len(toolCalls)-1].Args += evt.Token
+		for attempt := 0; attempt <= maxProviderRetries; attempt++ {
+			if attempt > 0 {
+				s.sendEvent(Event{Type: "status", Content: fmt.Sprintf("Retrying... attempt %d/%d", attempt, maxProviderRetries)})
+				select {
+				case <-ctx.Done():
+				case <-time.After(retryBackoff(attempt - 1)):
 				}
-			case message.StreamEventError:
+			}
+
+			if ctx.Err() != nil {
+				s.sendEvent(Event{Type: "cancelled"})
+				s.history = s.history[:len(s.history)-1]
+				s.setCancel(nil)
+				return
+			}
+
+			ch, err := s.provider.Stream(ctx, messages, toolDefs)
+			if err != nil {
 				if ctx.Err() != nil {
 					s.sendEvent(Event{Type: "cancelled"})
 					s.history = s.history[:len(s.history)-1]
 				} else {
-					logger.L().Error("stream event error", "error", evt.Error)
-					s.sendEvent(Event{Type: "error", Content: evt.Error})
+					logger.L().Error("stream failed", "error", err)
+					s.sendEvent(Event{Type: "error", Content: err.Error()})
 				}
 				s.setCancel(nil)
 				return
 			}
+
+			assistantText = ""
+			thinkingText = ""
+			toolCalls = nil
+			streamErr = nil
+
+			var retryNeeded bool
+			for evt := range ch {
+				switch evt.Type {
+				case message.StreamEventToken:
+					assistantText += evt.Token
+					s.sendEvent(Event{Type: "token", Content: evt.Token})
+				case message.StreamEventThinking:
+					thinkingText += evt.Token
+					s.sendEvent(Event{Type: "thinking", Content: evt.Token})
+				case message.StreamEventToolStart:
+					display := string(marshalToolCallDisplay(tool.ToolDisplay{}))
+					s.sendEvent(Event{
+						Type:     "tool_start",
+						Content:  evt.Token,
+						ToolName: evt.ToolName,
+						ToolID:   evt.ToolID,
+						Display:  display,
+					})
+
+					if evt.ToolID != "" {
+						toolCalls = append(toolCalls, toolCall{
+							ID:   evt.ToolID,
+							Name: evt.ToolName,
+							Args: evt.Token,
+						})
+					} else if len(toolCalls) > 0 {
+						toolCalls[len(toolCalls)-1].Args += evt.Token
+					}
+				case message.StreamEventError:
+					if ctx.Err() != nil {
+						s.sendEvent(Event{Type: "cancelled"})
+						s.history = s.history[:len(s.history)-1]
+						s.setCancel(nil)
+						return
+					}
+					if evt.StatusCode != 0 && isRetryableStatus(evt.StatusCode) && attempt < maxProviderRetries {
+						logger.L().Warn("retryable provider error", "status", evt.StatusCode, "attempt", attempt+1, "max", maxProviderRetries)
+						retryNeeded = true
+						streamErr = fmt.Errorf("HTTP %d: %s", evt.StatusCode, evt.Error)
+					} else {
+						logger.L().Error("stream event error", "error", evt.Error, "status", evt.StatusCode)
+						s.sendEvent(Event{Type: "error", Content: evt.Error})
+						s.setCancel(nil)
+						return
+					}
+				}
+				if retryNeeded {
+					break
+				}
+			}
+
+			if !retryNeeded {
+				break
+			}
+		}
+
+		if streamErr != nil {
+			logger.L().Error("provider retries exhausted", "error", streamErr, "retries", maxProviderRetries)
+			s.sendEvent(Event{Type: "error", Content: fmt.Sprintf("Failed after %d retries: %s", maxProviderRetries, streamErr.Error())})
+			s.setCancel(nil)
+			return
 		}
 
 		s.setCancel(nil)

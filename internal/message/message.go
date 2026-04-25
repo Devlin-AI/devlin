@@ -56,10 +56,11 @@ type Message struct {
 }
 
 type StreamEvent struct {
-	SessionID string          `json:"session_id"`
-	Type      StreamEventType `json:"type"`
-	Token     string          `json:"token,omitempty"`
-	Error     string          `json:"error,omitempty"`
-	ToolName  string          `json:"tool_name,omitempty"`
-	ToolID    string          `json:"tool_id,omitempty"`
+	SessionID  string          `json:"session_id"`
+	Type       StreamEventType `json:"type"`
+	Token      string          `json:"token,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	ToolName   string          `json:"tool_name,omitempty"`
+	ToolID     string          `json:"tool_id,omitempty"`
+	StatusCode int             `json:"status_code,omitempty"`
 }

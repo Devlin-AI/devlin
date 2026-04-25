@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/devlin-ai/devlin/internal/config"
@@ -47,7 +49,10 @@ type wsToolEndMsg struct {
 
 type wsCancelledMsg struct{}
 
+type wsStatusMsg struct{ text string }
 type cancelResetMsg struct{}
+type reconnectTickMsg struct{}
+type reconnectAttemptMsg struct{}
 
 type wsErrorMsg struct{ text string }
 type scrambleTickMsg struct{}
@@ -78,6 +83,27 @@ func dialGateway() tea.Cmd {
 		}
 		return wsConnectedMsg{conn: conn}
 	}
+}
+
+func isConnectionError(errText string) bool {
+	if websocket.IsCloseError(nil, websocket.CloseGoingAway, websocket.CloseNormalClosure, websocket.CloseAbnormalClosure) {
+		return false
+	}
+	lower := strings.ToLower(errText)
+	return strings.Contains(lower, "use of closed network connection") ||
+		strings.Contains(lower, "websocket: close") ||
+		strings.Contains(lower, "connection reset by peer") ||
+		strings.Contains(lower, "broken pipe") ||
+		strings.Contains(lower, "eof") ||
+		strings.Contains(lower, "dial:")
+}
+
+func reconnectTick() tea.Cmd {
+	return tea.Tick(reconnectInterval, func(time.Time) tea.Msg { return reconnectTickMsg{} })
+}
+
+func reconnectAttemptAfter(delay time.Duration) tea.Cmd {
+	return tea.Tick(delay, func(time.Time) tea.Msg { return reconnectAttemptMsg{} })
 }
 
 func readNext(conn *websocket.Conn) tea.Cmd {
@@ -121,6 +147,8 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 			return wsToolEndMsg{toolID: evt.ToolID, toolName: evt.ToolName, display: disp}
 		case "error":
 			return wsErrorMsg{text: evt.Content}
+		case "status":
+			return wsStatusMsg{text: evt.Content}
 		default:
 			return wsErrorMsg{text: "unknown event: " + evt.Type}
 		}

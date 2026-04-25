@@ -23,6 +23,10 @@ const (
 	scrambleLen      = 4
 	scrambleInterval = 60 * time.Millisecond
 	scrambleChars    = "!@#$%^&*()_+-=[]{}|;:',.<>?/~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+	reconnectInterval     = 500 * time.Millisecond
+	reconnectInitialDelay = 1 * time.Second
+	reconnectMaxDelay     = 30 * time.Second
 )
 
 var (
@@ -59,4 +63,12 @@ func scramble(frame int) string {
 
 func scrambleTick() tea.Cmd {
 	return tea.Tick(scrambleInterval, func(time.Time) tea.Msg { return scrambleTickMsg{} })
+}
+
+func reconnectBackoff(attempt int) time.Duration {
+	delay := reconnectInitialDelay * time.Duration(1<<uint(attempt))
+	if delay > reconnectMaxDelay {
+		delay = reconnectMaxDelay
+	}
+	return delay
 }
