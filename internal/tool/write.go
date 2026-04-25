@@ -142,6 +142,18 @@ func (WriteTool) Display(args, output string) ToolDisplay {
 	return disp
 }
 
+func (WriteTool) Core() bool { return true }
+func (WriteTool) PromptSnippet() string {
+	return "write — Create or completely overwrite a file. Must read existing files first."
+}
+func (WriteTool) PromptGuidelines() []string {
+	return []string{
+		"Only use write for new files or complete rewrites — prefer edit for changes",
+		"You MUST read an existing file before overwriting it",
+		"NEVER write new files unless explicitly required",
+	}
+}
+
 func init() {
 	Register(&WriteTool{})
 }

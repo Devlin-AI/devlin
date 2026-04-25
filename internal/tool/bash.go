@@ -270,6 +270,19 @@ func (BashTool) Display(args, output string) ToolDisplay {
 	return disp
 }
 
+func (BashTool) Core() bool { return true }
+func (BashTool) PromptSnippet() string {
+	return "bash — Execute shell commands with optional timeout. Persistent session, chains with &&/;."
+}
+func (BashTool) PromptGuidelines() []string {
+	return []string{
+		"Use bash for terminal operations (git, npm, docker, build, test), NOT for file reading/writing/editing/searching",
+		"Chain dependent commands with &&, run independent commands in parallel tool calls",
+		"Always quote paths with spaces. Verify parent dirs exist before mkdir",
+		"Only commit when explicitly asked. Only push when explicitly asked",
+	}
+}
+
 func init() {
 	Register(&BashTool{})
 }

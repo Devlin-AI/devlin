@@ -308,6 +308,17 @@ func (GrepTool) Display(args, output string) ToolDisplay {
 	return disp
 }
 
+func (GrepTool) Core() bool { return false }
+func (GrepTool) PromptSnippet() string {
+	return "grep — Search file contents by regex pattern. Returns matching files and line numbers."
+}
+func (GrepTool) PromptGuidelines() []string {
+	return []string{
+		"Prefer grep over bash grep/rg for searching file contents",
+		"Use include filter to narrow by file type (e.g. *.go)",
+	}
+}
+
 func init() {
 	Register(&GrepTool{})
 }

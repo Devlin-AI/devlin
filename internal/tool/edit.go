@@ -169,6 +169,19 @@ func (EditTool) Display(args, output string) ToolDisplay {
 	return disp
 }
 
+func (EditTool) Core() bool { return true }
+func (EditTool) PromptSnippet() string {
+	return "edit — Replace exact text in existing files. Supports replaceAll for renames."
+}
+func (EditTool) PromptGuidelines() []string {
+	return []string{
+		"oldString must match the file content exactly (preserve indentation)",
+		"Prefer edit over write for changing existing files",
+		"Use replaceAll to rename a variable across a file",
+		"If multiple matches, add more surrounding context to oldString",
+	}
+}
+
 func init() {
 	Register(&EditTool{})
 }

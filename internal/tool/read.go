@@ -148,6 +148,19 @@ func (ReadTool) Display(args, output string) ToolDisplay {
 	return disp
 }
 
+func (ReadTool) Core() bool { return true }
+func (ReadTool) PromptSnippet() string {
+	return "read — Read file or directory contents. Supports offset/limit for large files."
+}
+func (ReadTool) PromptGuidelines() []string {
+	return []string{
+		"Use read instead of cat/head/tail to examine files",
+		"Read files in parallel when you need multiple files",
+		"Use offset to read beyond default 2000 lines",
+		"You MUST read a file before editing or overwriting it",
+	}
+}
+
 func init() {
 	Register(&ReadTool{})
 }

@@ -17,6 +17,10 @@ type Tool interface {
 	Parameters() json.RawMessage
 	Execute(ctx context.Context, args json.RawMessage) (string, error)
 	Display(args, output string) ToolDisplay
+
+	Core() bool
+	PromptSnippet() string
+	PromptGuidelines() []string
 }
 
 type StreamingExecutor interface {

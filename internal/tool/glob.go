@@ -198,6 +198,17 @@ func (GlobTool) Display(args, output string) ToolDisplay {
 	return disp
 }
 
+func (GlobTool) Core() bool { return false }
+func (GlobTool) PromptSnippet() string {
+	return "glob — Find files by glob pattern (e.g. **/*.go). Sorted by modification time."
+}
+func (GlobTool) PromptGuidelines() []string {
+	return []string{
+		"Prefer glob over bash find for locating files by name pattern",
+		"Supports ** recursive patterns and {alt1,alt2} braces",
+	}
+}
+
 func init() {
 	Register(&GlobTool{})
 }

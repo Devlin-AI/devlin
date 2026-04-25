@@ -401,6 +401,17 @@ func (WebFetchTool) Display(args, output string) ToolDisplay {
 	return disp
 }
 
+func (WebFetchTool) Core() bool { return false }
+func (WebFetchTool) PromptSnippet() string {
+	return "webfetch — Fetch and convert a URL to markdown/text/html."
+}
+func (WebFetchTool) PromptGuidelines() []string {
+	return []string{
+		"Use webfetch to retrieve web pages for analysis",
+		"Defaults to markdown output. Prefer markdown over html for readability",
+	}
+}
+
 func init() {
 	Register(&WebFetchTool{})
 }

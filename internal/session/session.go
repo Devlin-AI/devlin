@@ -4,27 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/devlin-ai/devlin/internal/llm"
 	"github.com/devlin-ai/devlin/internal/logger"
 	"github.com/devlin-ai/devlin/internal/message"
+	"github.com/devlin-ai/devlin/internal/prompt"
 	"github.com/devlin-ai/devlin/internal/tool"
 	"github.com/google/uuid"
 )
 
 type Session struct {
-	id       string
-	platform string
-	provider llm.Provider
-	store    *Store
-	model    string
-	history  []message.Message
-	mu       sync.Mutex
-	cancelMu sync.Mutex
-	onEvent  func(Event)
-	cancel   context.CancelFunc
+	id           string
+	platform     string
+	provider     llm.Provider
+	store        *Store
+	model        string
+	history      []message.Message
+	systemPrompt string
+	mu           sync.Mutex
+	cancelMu     sync.Mutex
+	onEvent      func(Event)
+	cancel       context.CancelFunc
 }
 
 func New(provider llm.Provider, store *Store, platform string, model string, onEvent func(Event)) (*Session, error) {
@@ -34,13 +37,17 @@ func New(provider llm.Provider, store *Store, platform string, model string, onE
 		return nil, err
 	}
 
+	cwd, _ := os.Getwd()
+	sysPrompt := prompt.Build(cwd, tool.All())
+
 	s := &Session{
-		id:       id,
-		platform: platform,
-		provider: provider,
-		store:    store,
-		model:    model,
-		onEvent:  onEvent,
+		id:           id,
+		platform:     platform,
+		provider:     provider,
+		store:        store,
+		model:        model,
+		systemPrompt: sysPrompt,
+		onEvent:      onEvent,
 	}
 
 	s.store.persistMessage(id, "tool_defs", string(marshalToolCalls(buildToolDefs())), nil, "", "", "", "", nil)
@@ -97,7 +104,17 @@ func (s *Session) processLoop() {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.setCancel(cancel)
 
-		ch, err := s.provider.Stream(ctx, s.history, toolDefs)
+		messages := s.history
+		if s.systemPrompt != "" {
+			messages = append([]message.Message{
+				{
+					Role:    message.RoleSystem,
+					Content: s.systemPrompt,
+				},
+			}, messages...)
+		}
+
+		ch, err := s.provider.Stream(ctx, messages, toolDefs)
 		if err != nil {
 			if ctx.Err() != nil {
 				s.sendEvent(Event{Type: "cancelled"})
