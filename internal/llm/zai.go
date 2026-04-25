@@ -76,7 +76,10 @@ func (z *ZaiProvider) Stream(ctx context.Context, messages []message.Message, to
 			return
 		}
 
-		defer resp.Body.Close()
+		go func() {
+			<-ctx.Done()
+			resp.Body.Close()
+		}()
 
 		if resp.StatusCode != http.StatusOK {
 			log.Error("unexpected status code", "status", resp.StatusCode)

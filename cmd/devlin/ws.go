@@ -12,6 +12,7 @@ import (
 )
 
 type wsMessage struct {
+	Type    string `json:"type"`
 	Content string `json:"content"`
 }
 
@@ -37,8 +38,22 @@ type wsToolOutputMsg struct {
 }
 type wsToolEndMsg struct{}
 
+type wsCancelledMsg struct{}
+
+type cancelResetMsg struct{}
+
 type wsErrorMsg struct{ text string }
 type scrambleTickMsg struct{}
+
+func sendCancel(conn *websocket.Conn) tea.Cmd {
+	return func() tea.Msg {
+		err := conn.WriteJSON(wsMessage{Type: "cancel"})
+		if err != nil {
+			return wsErrorMsg{text: err.Error()}
+		}
+		return nil
+	}
+}
 
 func dialGateway() tea.Cmd {
 	cfg, err := config.Load()
@@ -77,6 +92,8 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 			return wsThinkingMsg{text: evt.Content}
 		case "done":
 			return wsDoneMsg{}
+		case "cancelled":
+			return wsCancelledMsg{}
 		case "tool_start":
 			var disp tool.ToolDisplay
 			if evt.Display != "" {

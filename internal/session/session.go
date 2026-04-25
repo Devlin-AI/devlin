@@ -22,6 +22,7 @@ type Session struct {
 	model    string
 	history  []message.Message
 	mu       sync.Mutex
+	cancelMu sync.Mutex
 	onEvent  func(Event)
 	cancel   context.CancelFunc
 }
@@ -56,9 +57,17 @@ func (s *Session) IsExpired(timeout time.Duration) bool {
 }
 
 func (s *Session) Cancel() {
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
 	if s.cancel != nil {
 		s.cancel()
 	}
+}
+
+func (s *Session) setCancel(fn context.CancelFunc) {
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+	s.cancel = fn
 }
 
 func (s *Session) ProcessMessage(content string) {
@@ -86,13 +95,18 @@ func (s *Session) processLoop() {
 
 	for {
 		ctx, cancel := context.WithCancel(context.Background())
-		s.cancel = cancel
+		s.setCancel(cancel)
 
 		ch, err := s.provider.Stream(ctx, s.history, toolDefs)
 		if err != nil {
-			logger.L().Error("stream failed", "error", err)
-			s.sendEvent(Event{Type: "error", Content: err.Error()})
-			s.cancel = nil
+			if ctx.Err() != nil {
+				s.sendEvent(Event{Type: "cancelled"})
+				s.history = s.history[:len(s.history)-1]
+			} else {
+				logger.L().Error("stream failed", "error", err)
+				s.sendEvent(Event{Type: "error", Content: err.Error()})
+			}
+			s.setCancel(nil)
 			return
 		}
 
@@ -128,14 +142,25 @@ func (s *Session) processLoop() {
 					toolCalls[len(toolCalls)-1].Args += evt.Token
 				}
 			case message.StreamEventError:
-				logger.L().Error("stream event error", "error", evt.Error)
-				s.sendEvent(Event{Type: "error", Content: evt.Error})
-				s.cancel = nil
+				if ctx.Err() != nil {
+					s.sendEvent(Event{Type: "cancelled"})
+					s.history = s.history[:len(s.history)-1]
+				} else {
+					logger.L().Error("stream event error", "error", evt.Error)
+					s.sendEvent(Event{Type: "error", Content: evt.Error})
+				}
+				s.setCancel(nil)
 				return
 			}
 		}
 
-		s.cancel = nil
+		s.setCancel(nil)
+
+		if ctx.Err() != nil {
+			s.sendEvent(Event{Type: "cancelled"})
+			s.history = s.history[:len(s.history)-1]
+			return
+		}
 
 		assistantMsg := message.Message{
 			Role:      message.RoleAssistant,
@@ -175,7 +200,8 @@ func (s *Session) processLoop() {
 
 		for _, tc := range toolCalls {
 			if ctx.Err() != nil {
-				s.sendEvent(Event{Type: "error", Content: "cancelled"})
+				s.sendEvent(Event{Type: "cancelled"})
+				s.history = s.history[:len(s.history)-1]
 				return
 			}
 
@@ -218,6 +244,12 @@ func (s *Session) processLoop() {
 				}
 
 				s.completeToolCall(tc, finalJSON, t.Display(tc.Args, finalJSON))
+
+				if ctx.Err() != nil {
+					s.sendEvent(Event{Type: "cancelled"})
+					s.history = s.history[:len(s.history)-1]
+					return
+				}
 				continue
 			}
 
@@ -227,6 +259,12 @@ func (s *Session) processLoop() {
 			}
 
 			s.completeToolCall(tc, output, t.Display(tc.Args, output))
+
+			if ctx.Err() != nil {
+				s.sendEvent(Event{Type: "cancelled"})
+				s.history = s.history[:len(s.history)-1]
+				return
+			}
 		}
 	}
 }

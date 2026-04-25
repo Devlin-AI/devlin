@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -28,6 +29,7 @@ type model struct {
 	windowHeight  int
 	messages      []message
 	streaming     bool
+	cancelPending bool
 	err           error
 	conn          *websocket.Conn
 	scrambleFrame int
@@ -63,6 +65,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if msg.String() == "esc" {
+			if m.streaming {
+				if !m.cancelPending {
+					if m.textarea.Value() != "" {
+						m.textarea.Reset()
+						m.textarea.SetHeight(1)
+						m.viewport.Height = m.windowHeight - m.textarea.Height() - dividerHeight
+					}
+					m.cancelPending = true
+					m.textarea.Placeholder = "Press Esc again to cancel..."
+					refreshView(&m)
+					return m, tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
+						return cancelResetMsg{}
+					})
+				}
+				m.cancelPending = false
+				m.textarea.Placeholder = "Send a new message..."
+				refreshView(&m)
+				if m.conn != nil {
+					return m, sendCancel(m.conn)
+				}
+			} else {
+				if m.textarea.Value() != "" {
+					m.textarea.Reset()
+					m.textarea.SetHeight(1)
+					m.viewport.Height = m.windowHeight - m.textarea.Height() - dividerHeight
+					refreshView(&m)
+				}
+			}
+			return m, nil
+		}
+
+		if m.cancelPending {
+			m.cancelPending = false
+			m.textarea.Placeholder = "Send a new message..."
+		}
+
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
@@ -189,6 +228,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		refreshView(&m)
 		return m, readNext(m.conn)
 
+	case wsCancelledMsg:
+		m.streaming = false
+		refreshView(&m)
+		return m, readNext(m.conn)
+
 	case wsDoneMsg:
 		m.streaming = false
 		refreshView(&m)
@@ -200,6 +244,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Height = m.windowHeight - m.textarea.Height() - dividerHeight
 		refreshView(&m)
 		return m, readNext(m.conn)
+
+	case cancelResetMsg:
+		m.cancelPending = false
+		m.textarea.Placeholder = "Send a new message..."
+		refreshView(&m)
+		return m, nil
 	}
 
 	return m, tea.Batch(cmds...)

@@ -93,7 +93,13 @@ func main() {
 				continue
 			}
 
-			sess.ProcessMessage(msg.Content)
+			if msg.Type == "cancel" {
+				log.Info("cancel requested")
+				sess.Cancel()
+				continue
+			}
+
+			go sess.ProcessMessage(msg.Content)
 		}
 	})
 
