@@ -18,8 +18,10 @@ import (
 
 type message struct {
 	role       string
+	toolID     string
 	text       string
 	thinking   string
+	toolName   string
 	display    tool.ToolDisplay
 	rawContent string
 	mdBody     string
@@ -219,23 +221,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wsToolStartMsg:
 		m.messages = append(m.messages, message{
-			role:    "tool",
-			display: msg.display,
+			role:     "tool",
+			toolID:   msg.toolID,
+			toolName: msg.toolName,
+			display:  msg.display,
 		})
 		refreshView(&m)
 		return m, readNext(m.conn)
 	case wsToolOutputMsg:
-		if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "tool" {
-			m.messages[len(m.messages)-1].rawContent += msg.content
+		if idx := m.findToolMsg(msg.toolID); idx >= 0 {
+			m.messages[idx].rawContent += msg.content
 			if msg.display.Title != "" || len(msg.display.Body) > 0 {
-				m.messages[len(m.messages)-1].display = msg.display
+				m.messages[idx].display = msg.display
 			}
 		}
 		refreshView(&m)
 		return m, readNext(m.conn)
 	case wsToolEndMsg:
-		if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "tool" {
-			m.messages[len(m.messages)-1].rawContent = ""
+		if idx := m.findToolMsg(msg.toolID); idx >= 0 {
+			m.messages[idx].rawContent = ""
+			if msg.toolName != "" {
+				m.messages[idx].toolName = msg.toolName
+			}
+			if msg.display.Title != "" || len(msg.display.Body) > 0 {
+				m.messages[idx].display = msg.display
+			}
 		}
 		m.messages = append(m.messages, message{role: "assistant", text: ""})
 		refreshView(&m)
@@ -280,6 +290,10 @@ func (m model) renderMessages() string {
 	w := m.viewport.Width
 
 	for i, msg := range m.messages {
+		if msg.role == "assistant" && msg.text == "" && msg.mdBody == "" && i != len(m.messages)-1 {
+			continue
+		}
+
 		var prefix string
 		if msg.role == "user" {
 			prefix = userStyle.Render(userPrefix)
@@ -306,9 +320,9 @@ func (m model) renderMessages() string {
 			body = strings.Join(lines, "\n"+strings.Repeat(" ", prefixW))
 		} else if msg.role == "tool" {
 			if msg.rawContent != "" {
-				body = renderStreamingTool(msg.display.Title, msg.rawContent, bodyW, prefixW)
+				body = renderStreamingTool(msg.toolName, msg.display.Title, msg.rawContent, bodyW, prefixW)
 			} else {
-				body = renderToolDisplay(msg.display, bodyW, prefixW)
+				body = renderToolDisplay(msg.toolName, msg.display, bodyW, prefixW)
 			}
 		} else {
 			wrapped := ansi.Wrap(msg.text, bodyW, " ")
@@ -326,6 +340,15 @@ func (m model) renderMessages() string {
 		}
 	}
 	return s
+}
+
+func (m model) findToolMsg(toolID string) int {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].role == "tool" && m.messages[i].toolID == toolID {
+			return i
+		}
+	}
+	return -1
 }
 
 func visualLineCount(ta textarea.Model) int {

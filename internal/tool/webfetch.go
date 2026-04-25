@@ -386,17 +386,17 @@ func stripHTMLTags(s string) string {
 func (WebFetchTool) Display(args, output string) ToolDisplay {
 	var wp webfetchParams
 	if err := json.Unmarshal([]byte(args), &wp); err != nil {
-		return ToolDisplay{Title: "webfetch", Body: []string{output}}
+		return ToolDisplay{Body: []DisplayBlock{{Type: DisplayText, Content: output}}}
 	}
 
 	var out webfetchOutput
 	if err := json.Unmarshal([]byte(output), &out); err != nil {
-		return ToolDisplay{Title: "webfetch", Body: []string{output}}
+		return ToolDisplay{Title: wp.URL, Body: []DisplayBlock{{Type: DisplayText, Content: output}}}
 	}
 
-	disp := ToolDisplay{Title: out.Title}
+	disp := ToolDisplay{Title: wp.URL}
 	if out.Output != "" {
-		disp.Body = strings.Split(out.Output, "\n")
+		disp.Body = []DisplayBlock{{Type: DisplayText, Content: out.Output}}
 	}
 	return disp
 }

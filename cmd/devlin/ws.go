@@ -30,13 +30,20 @@ type wsTokenMsg struct{ text string }
 type wsDoneMsg struct{}
 
 type wsToolStartMsg struct {
-	display tool.ToolDisplay
+	toolID   string
+	toolName string
+	display  tool.ToolDisplay
 }
 type wsToolOutputMsg struct {
+	toolID  string
 	content string
 	display tool.ToolDisplay
 }
-type wsToolEndMsg struct{}
+type wsToolEndMsg struct {
+	toolID   string
+	toolName string
+	display  tool.ToolDisplay
+}
 
 type wsCancelledMsg struct{}
 
@@ -98,18 +105,20 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 			var disp tool.ToolDisplay
 			if evt.Display != "" {
 				json.Unmarshal([]byte(evt.Display), &disp)
-			} else {
-				disp = tool.ToolDisplay{Title: evt.ToolName}
 			}
-			return wsToolStartMsg{display: disp}
+			return wsToolStartMsg{toolID: evt.ToolID, toolName: evt.ToolName, display: disp}
 		case "tool_output":
 			var disp tool.ToolDisplay
 			if evt.Display != "" {
 				json.Unmarshal([]byte(evt.Display), &disp)
 			}
-			return wsToolOutputMsg{content: evt.Content, display: disp}
+			return wsToolOutputMsg{toolID: evt.ToolID, content: evt.Content, display: disp}
 		case "tool_end":
-			return wsToolEndMsg{}
+			var disp tool.ToolDisplay
+			if evt.Display != "" {
+				json.Unmarshal([]byte(evt.Display), &disp)
+			}
+			return wsToolEndMsg{toolID: evt.ToolID, toolName: evt.ToolName, display: disp}
 		case "error":
 			return wsErrorMsg{text: evt.Content}
 		default:

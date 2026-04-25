@@ -124,20 +124,20 @@ func (WriteTool) Execute(ctx context.Context, args json.RawMessage) (string, err
 func (WriteTool) Display(args, output string) ToolDisplay {
 	var wp writeParams
 	if err := json.Unmarshal([]byte(args), &wp); err != nil {
-		return ToolDisplay{Title: "write", Body: []string{output}}
+		return ToolDisplay{Body: []DisplayBlock{{Type: DisplayText, Content: output}}}
 	}
 
 	var out writeOutput
 	if err := json.Unmarshal([]byte(output), &out); err != nil {
-		return ToolDisplay{Title: "write", Body: []string{output}}
+		return ToolDisplay{Title: wp.FilePath, Body: []DisplayBlock{{Type: DisplayText, Content: output}}}
 	}
 
 	disp := ToolDisplay{Title: out.Title}
 	if out.Output != "" {
-		disp.Body = []string{out.Output}
+		disp.Body = []DisplayBlock{{Type: DisplayText, Content: out.Output}}
 	}
 	if out.Diff != "" {
-		disp.Body = append(disp.Body, out.Diff)
+		disp.Body = append(disp.Body, DisplayBlock{Type: DisplayDiff, Content: out.Diff})
 	}
 	return disp
 }

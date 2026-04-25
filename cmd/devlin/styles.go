@@ -26,12 +26,18 @@ const (
 )
 
 var (
-	promptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
-	userStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
-	aiStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
-	toolStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	promptStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
+	userStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
+	aiStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
+	toolStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	errStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	diffAddStyle = lipgloss.NewStyle().Background(lipgloss.Color("28")).Foreground(lipgloss.Color("15"))
+	diffDelStyle = lipgloss.NewStyle().Background(lipgloss.Color("160")).Foreground(lipgloss.Color("15"))
+
+	toolNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	toolBodyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	toolCodeStyle = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("252"))
 
 	aiPrefixW = lipgloss.Width(aiStyle.Render(aiPrefix))
 	mdStyle   = "dark"

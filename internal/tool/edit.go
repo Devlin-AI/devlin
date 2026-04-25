@@ -151,20 +151,20 @@ func (EditTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 func (EditTool) Display(args, output string) ToolDisplay {
 	var ep editParams
 	if err := json.Unmarshal([]byte(args), &ep); err != nil {
-		return ToolDisplay{Title: "edit", Body: []string{output}}
+		return ToolDisplay{Body: []DisplayBlock{{Type: DisplayText, Content: output}}}
 	}
 
 	var out editOutput
 	if err := json.Unmarshal([]byte(output), &out); err != nil {
-		return ToolDisplay{Title: "edit", Body: []string{output}}
+		return ToolDisplay{Title: ep.FilePath, Body: []DisplayBlock{{Type: DisplayText, Content: output}}}
 	}
 
 	disp := ToolDisplay{Title: out.Title}
 	if out.Output != "" {
-		disp.Body = []string{out.Output}
+		disp.Body = []DisplayBlock{{Type: DisplayText, Content: out.Output}}
 	}
 	if out.Diff != "" {
-		disp.Body = append(disp.Body, out.Diff)
+		disp.Body = append(disp.Body, DisplayBlock{Type: DisplayDiff, Content: out.Diff})
 	}
 	return disp
 }

@@ -27,31 +27,91 @@ func processCarriageReturns(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderToolDisplay(d tool.ToolDisplay, bodyW int, prefixW int) string {
-	var lines []string
-	if d.Title != "" {
-		lines = append(lines, dimStyle.Render(d.Title))
+func buildToolHeader(toolName, title string) string {
+	if toolName != "" {
+		h := toolNameStyle.Render(toolName)
+		if title != "" {
+			h += " " + dimStyle.Render(title)
+		}
+		return h
 	}
-	for _, entry := range d.Body {
-		lines = append(lines, strings.Split(entry, "\n")...)
+	if title != "" {
+		return dimStyle.Render(title)
+	}
+	return ""
+}
+
+func renderToolDisplay(toolName string, d tool.ToolDisplay, bodyW int, prefixW int) string {
+	var lines []string
+	if h := buildToolHeader(toolName, d.Title); h != "" {
+		lines = append(lines, h)
+	}
+	for _, block := range d.Body {
+		lines = append(lines, renderBlock(block)...)
 	}
 	return renderLines(lines, toolBodyMaxLines, bodyW, prefixW)
 }
 
-func renderStreamingTool(title string, raw string, bodyW int, prefixW int) string {
-	cleaned := processCarriageReturns(stripANSI(raw))
-	lines := strings.Split(cleaned, "\n")
+func renderBlock(block tool.DisplayBlock) []string {
+	switch block.Type {
+	case tool.DisplayDiff:
+		return renderDiffLines(block.Content)
+	case tool.DisplayCode:
+		raw := strings.Split(block.Content, "\n")
+		lines := make([]string, len(raw))
+		for i, l := range raw {
+			lines[i] = toolCodeStyle.Render(l)
+		}
+		return lines
+	default:
+		raw := strings.Split(block.Content, "\n")
+		lines := make([]string, len(raw))
+		for i, l := range raw {
+			lines[i] = toolBodyStyle.Render(l)
+		}
+		return lines
+	}
+}
 
-	for len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
+func renderDiffLines(diff string) []string {
+	rawLines := strings.Split(diff, "\n")
+	var lines []string
+	for _, line := range rawLines {
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ ") {
+			lines = append(lines, dimStyle.Render(line))
+		} else if strings.HasPrefix(line, "+") {
+			lines = append(lines, diffAddStyle.Render(line))
+		} else if strings.HasPrefix(line, "-") {
+			lines = append(lines, diffDelStyle.Render(line))
+		} else {
+			lines = append(lines, dimStyle.Render(line))
+		}
+	}
+	return lines
+}
+
+func renderStreamingTool(toolName string, title string, raw string, bodyW int, prefixW int) string {
+	cleaned := processCarriageReturns(stripANSI(raw))
+	rawLines := strings.Split(cleaned, "\n")
+
+	for len(rawLines) > 0 && rawLines[len(rawLines)-1] == "" {
+		rawLines = rawLines[:len(rawLines)-1]
 	}
 
-	if len(lines) == 0 {
+	if len(rawLines) == 0 {
 		return ""
 	}
 
-	if title != "" {
-		lines = append([]string{dimStyle.Render(title)}, lines...)
+	lines := make([]string, len(rawLines))
+	for i, l := range rawLines {
+		lines[i] = toolBodyStyle.Render(l)
+	}
+
+	if h := buildToolHeader(toolName, title); h != "" {
+		lines = append([]string{h}, lines...)
 	}
 
 	return renderLines(lines, toolBodyStreamingMaxLines, bodyW, prefixW)
@@ -63,9 +123,14 @@ func renderLines(lines []string, maxLines int, bodyW int, prefixW int) string {
 	}
 
 	if len(lines) > maxLines {
-		trimmed := lines[len(lines)-maxLines:]
-		trimmed[0] = dimStyle.Render(fmt.Sprintf("... (%d more lines)", len(lines)-maxLines)) + "\n" + trimmed[0]
-		lines = trimmed
+		tailLines := maxLines - 2
+		if tailLines < 1 {
+			tailLines = 1
+		}
+		first := lines[0]
+		hidden := len(lines) - 1 - tailLines
+		tail := lines[len(lines)-tailLines:]
+		lines = append([]string{first, dimStyle.Render(fmt.Sprintf("... (%d more lines)", hidden))}, tail...)
 	}
 
 	indent := strings.Repeat(" ", prefixW)

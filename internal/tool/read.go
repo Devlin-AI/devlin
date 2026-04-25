@@ -133,19 +133,15 @@ func (ReadTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 func (ReadTool) Display(args, output string) ToolDisplay {
 	var rp readParams
 	if err := json.Unmarshal([]byte(args), &rp); err != nil {
-		return ToolDisplay{Title: "read", Body: []string{output}}
+		return ToolDisplay{}
 	}
 
 	var out readOutput
 	if err := json.Unmarshal([]byte(output), &out); err != nil {
-		return ToolDisplay{Title: "read", Body: []string{output}}
+		return ToolDisplay{Title: rp.FilePath}
 	}
 
-	disp := ToolDisplay{Title: out.Title}
-	if out.Output != "" {
-		disp.Body = strings.Split(out.Output, "\n")
-	}
-	return disp
+	return ToolDisplay{Title: out.Title}
 }
 
 func (ReadTool) Core() bool { return true }

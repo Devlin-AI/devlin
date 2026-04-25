@@ -5,10 +5,24 @@ import (
 	"encoding/json"
 )
 
+type DisplayType string
+
+const (
+	DisplayText DisplayType = "text"
+	DisplayDiff DisplayType = "diff"
+	DisplayCode DisplayType = "code"
+)
+
+type DisplayBlock struct {
+	Type    DisplayType `json:"type"`
+	Content string      `json:"content"`
+	Lang    string      `json:"lang,omitempty"`
+}
+
 type ToolDisplay struct {
-	Title    string   `json:"title"`
-	Subtitle string   `json:"subtitle,omitempty"`
-	Body     []string `json:"body,omitempty"`
+	Title    string         `json:"title"`
+	Subtitle string         `json:"subtitle,omitempty"`
+	Body     []DisplayBlock `json:"body,omitempty"`
 }
 
 type Tool interface {

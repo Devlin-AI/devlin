@@ -238,32 +238,32 @@ func (BashTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 func (BashTool) Display(args, output string) ToolDisplay {
 	var bp bashParams
 	if err := json.Unmarshal([]byte(args), &bp); err != nil {
-		return ToolDisplay{Title: "bash", Body: []string{output}}
+		return ToolDisplay{Body: []DisplayBlock{{Type: DisplayText, Content: output}}}
 	}
 
 	disp := ToolDisplay{
-		Title: fmt.Sprintf("$ %s", bp.Command),
+		Title: bp.Command,
 	}
 
 	var out bashOutput
 	if err := json.Unmarshal([]byte(output), &out); err != nil {
 		if output != "" {
-			disp.Body = []string{output}
+			disp.Body = []DisplayBlock{{Type: DisplayText, Content: output}}
 		}
 		return disp
 	}
 
 	if out.Stdout != "" {
-		disp.Body = append(disp.Body, out.Stdout)
+		disp.Body = append(disp.Body, DisplayBlock{Type: DisplayText, Content: out.Stdout})
 	}
 	if out.Stderr != "" {
-		disp.Body = append(disp.Body, out.Stderr)
+		disp.Body = append(disp.Body, DisplayBlock{Type: DisplayText, Content: out.Stderr})
 	}
 	if len(disp.Body) == 0 {
 		if out.ExitCode != 0 {
-			disp.Body = append(disp.Body, fmt.Sprintf("(exit code %d)", out.ExitCode))
+			disp.Body = append(disp.Body, DisplayBlock{Type: DisplayText, Content: fmt.Sprintf("(exit code %d)", out.ExitCode)})
 		} else {
-			disp.Body = append(disp.Body, "(no output)")
+			disp.Body = append(disp.Body, DisplayBlock{Type: DisplayText, Content: "(no output)"})
 		}
 	}
 

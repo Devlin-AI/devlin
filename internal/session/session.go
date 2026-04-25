@@ -140,7 +140,7 @@ func (s *Session) processLoop() {
 				thinkingText += evt.Token
 				s.sendEvent(Event{Type: "thinking", Content: evt.Token})
 			case message.StreamEventToolStart:
-				display := string(marshalToolCallDisplay(tool.ToolDisplay{Title: evt.ToolName}))
+				display := string(marshalToolCallDisplay(tool.ToolDisplay{}))
 				s.sendEvent(Event{
 					Type:     "tool_start",
 					Content:  evt.Token,
@@ -225,7 +225,7 @@ func (s *Session) processLoop() {
 			t, ok := tool.Get(tc.Name)
 			if !ok {
 				output := fmt.Sprintf("error: unknown tool %q", tc.Name)
-				s.completeToolCall(tc, output, tool.ToolDisplay{Title: tc.Name, Body: []string{output}})
+				s.completeToolCall(tc, output, tool.ToolDisplay{Body: []tool.DisplayBlock{{Type: tool.DisplayText, Content: output}}})
 				continue
 			}
 
@@ -291,11 +291,12 @@ func (s *Session) completeToolCall(tc toolCall, output string, disp tool.ToolDis
 		Type:    "tool_output",
 		Content: output,
 		ToolID:  tc.ID,
-		Display: string(marshalToolCallDisplay(disp)),
 	})
 	s.sendEvent(Event{
-		Type:   "tool_end",
-		ToolID: tc.ID,
+		Type:     "tool_end",
+		ToolID:   tc.ID,
+		ToolName: tc.Name,
+		Display:  string(marshalToolCallDisplay(disp)),
 	})
 
 	toolMsg := message.Message{

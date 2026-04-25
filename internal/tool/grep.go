@@ -293,17 +293,17 @@ func noMatchResult(pattern, searchDir string) string {
 func (GrepTool) Display(args, output string) ToolDisplay {
 	var gp grepParams
 	if err := json.Unmarshal([]byte(args), &gp); err != nil {
-		return ToolDisplay{Title: "grep", Body: []string{output}}
+		return ToolDisplay{Body: []DisplayBlock{{Type: DisplayText, Content: output}}}
 	}
 
 	var out grepOutput
 	if err := json.Unmarshal([]byte(output), &out); err != nil {
-		return ToolDisplay{Title: "grep", Body: []string{output}}
+		return ToolDisplay{Title: gp.Pattern, Body: []DisplayBlock{{Type: DisplayText, Content: output}}}
 	}
 
-	disp := ToolDisplay{Title: out.Title}
+	disp := ToolDisplay{Title: gp.Pattern}
 	if out.Output != "" {
-		disp.Body = strings.Split(out.Output, "\n")
+		disp.Body = []DisplayBlock{{Type: DisplayText, Content: out.Output}}
 	}
 	return disp
 }
