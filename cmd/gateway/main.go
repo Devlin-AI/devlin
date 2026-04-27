@@ -30,6 +30,63 @@ func makeOnEvent(conn *websocket.Conn) func(session.Event) {
 	}
 }
 
+type connState struct {
+	conn     *websocket.Conn
+	sess     *session.Session
+	store    *session.Store
+	provider llm.Provider
+	model    string
+	channel  string
+}
+
+func (cs *connState) handleNew(msg channel.InboundMessage) {
+	sess, err := session.New(cs.provider, cs.store, msg.Channel, msg.Mode, cs.model, makeOnEvent(cs.conn))
+	if err != nil {
+		logger.L().Error("failed to create session", "error", err)
+		send(cs.conn, channel.OutboundMessage{Type: "error", Content: err.Error()})
+		return
+	}
+	cs.sess = sess
+	cs.channel = msg.Channel
+	send(cs.conn, channel.OutboundMessage{
+		Type:      "session_created",
+		SessionID: sess.ID(),
+		Mode:      sess.Mode(),
+	})
+}
+
+func (cs *connState) handleContinue(msg channel.InboundMessage) {
+	lastID, err := cs.store.GetLastSession(msg.Channel, msg.Mode)
+	if err != nil {
+		logger.L().Error("failed to get last session", "error", err)
+		send(cs.conn, channel.OutboundMessage{Type: "error", Content: err.Error()})
+		return
+	}
+
+	if lastID == "" {
+		cs.handleNew(msg)
+		return
+	}
+
+	sess, err := session.Load(cs.provider, cs.store, lastID, cs.model, makeOnEvent(cs.conn))
+	if err != nil {
+		logger.L().Error("failed to load session", "error", err)
+		send(cs.conn, channel.OutboundMessage{Type: "error", Content: err.Error()})
+		return
+	}
+	cs.sess = sess
+	cs.channel = msg.Channel
+	send(cs.conn, channel.OutboundMessage{
+		Type:      "session_continued",
+		SessionID: sess.ID(),
+		Mode:      sess.Mode(),
+	})
+}
+
+func (cs *connState) requireSession() bool {
+	return cs.sess != nil
+}
+
 func main() {
 	logger.Init()
 
@@ -78,16 +135,12 @@ func main() {
 		}
 		defer conn.Close()
 
-		sess, err := session.New(provider, store, "tui", modelName, makeOnEvent(conn))
-		if err != nil {
-			log.Error("failed to create session", "error", err)
-			return
+		cs := &connState{
+			conn:     conn,
+			store:    store,
+			provider: provider,
+			model:    modelName,
 		}
-
-		send(conn, channel.OutboundMessage{
-			Type:      "session_created",
-			SessionID: sess.ID(),
-		})
 
 		for {
 			_, raw, err := conn.ReadMessage()
@@ -101,38 +154,54 @@ func main() {
 			}
 
 			switch msg.Type {
+			case "new":
+				cs.handleNew(msg)
+			case "continue":
+				cs.handleContinue(msg)
 			case "cancel":
+				if !cs.requireSession() {
+					continue
+				}
 				log.Info("cancel requested")
-				sess.Cancel()
+				cs.sess.Cancel()
 			case "branch":
-				branch, err := sess.Branch(msg.MessageID)
+				if !cs.requireSession() {
+					continue
+				}
+				branch, err := cs.sess.Branch(msg.MessageID)
 				if err != nil {
 					log.Error("branch failed", "error", err)
 					send(conn, channel.OutboundMessage{Type: "error", Content: err.Error()})
 					continue
 				}
-				sess = branch
-				sess.SetOnEvent(makeOnEvent(conn))
+				cs.sess = branch
+				cs.sess.SetOnEvent(makeOnEvent(conn))
 				send(conn, channel.OutboundMessage{
 					Type:      "branch_created",
 					SessionID: branch.ID(),
 					MessageID: msg.MessageID,
 				})
 			case "switch_session":
-				switched, err := sess.SwitchTo(msg.SessionID)
+				if !cs.requireSession() {
+					continue
+				}
+				switched, err := cs.sess.SwitchTo(msg.SessionID)
 				if err != nil {
 					log.Error("switch session failed", "error", err)
 					send(conn, channel.OutboundMessage{Type: "error", Content: err.Error()})
 					continue
 				}
-				sess = switched
-				sess.SetOnEvent(makeOnEvent(conn))
+				cs.sess = switched
+				cs.sess.SetOnEvent(makeOnEvent(conn))
 				send(conn, channel.OutboundMessage{
 					Type:      "session_switched",
 					SessionID: switched.ID(),
 				})
 			case "list_branches":
-				branchMetas, err := sess.ListBranches()
+				if !cs.requireSession() {
+					continue
+				}
+				branchMetas, err := cs.sess.ListBranches()
 				if err != nil {
 					log.Error("list branches failed", "error", err)
 					send(conn, channel.OutboundMessage{Type: "error", Content: err.Error()})
@@ -145,16 +214,55 @@ func main() {
 						ParentMsgID: b.ParentMsgID,
 					}
 				}
+				var parent *channel.BranchInfo
+				parentMeta, err := cs.sess.GetParentBranch()
+				if err != nil {
+					log.Error("get parent branch failed", "error", err)
+				} else if parentMeta != nil {
+					parent = &channel.BranchInfo{
+						SessionID:   parentMeta.ParentID,
+						ParentMsgID: parentMeta.ParentMsgID,
+					}
+				}
 				send(conn, channel.OutboundMessage{
 					Type:     "branch_list",
+					Parent:   parent,
 					Branches: infos,
 				})
 			case "list_sessions":
+				ch := cs.channel
+				if ch == "" {
+					ch = msg.Channel
+				}
+				if ch == "" {
+					send(conn, channel.OutboundMessage{Type: "session_list"})
+					continue
+				}
+				sessionMetas, err := store.ListSessions(ch)
+				if err != nil {
+					log.Error("list sessions failed", "error", err)
+					send(conn, channel.OutboundMessage{Type: "error", Content: err.Error()})
+					continue
+				}
+				infos := make([]channel.SessionInfo, len(sessionMetas))
+				for i, sm := range sessionMetas {
+					infos[i] = channel.SessionInfo{
+						ID:        sm.ID,
+						Channel:   sm.Channel,
+						Mode:      sm.Mode,
+						CreatedAt: sm.CreatedAt,
+						UpdatedAt: sm.UpdatedAt,
+					}
+				}
 				send(conn, channel.OutboundMessage{
-					Type: "session_list",
+					Type:     "session_list",
+					Sessions: infos,
 				})
 			default:
-				go sess.ProcessMessage(msg.Content)
+				if !cs.requireSession() {
+					continue
+				}
+				go cs.sess.ProcessMessage(msg.Content)
 			}
 		}
 	})

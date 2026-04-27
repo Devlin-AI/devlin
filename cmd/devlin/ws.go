@@ -51,14 +51,36 @@ type wsBranchCreatedMsg struct {
 }
 type wsSessionCreatedMsg struct {
 	sessionID string
+	mode      string
+}
+type wsSessionContinuedMsg struct {
+	sessionID string
+	mode      string
 }
 type wsSessionSwitchedMsg struct {
 	sessionID string
 }
 type wsBranchListMsg struct {
+	parent   *channel.BranchInfo
 	branches []channel.BranchInfo
 }
-type wsSessionListMsg struct{}
+type wsSessionListMsg struct {
+	sessions []channel.SessionInfo
+}
+
+func sendNew(conn *websocket.Conn) tea.Cmd {
+	return func() tea.Msg {
+		err := conn.WriteJSON(channel.InboundMessage{
+			Type:    "new",
+			Channel: "tui",
+			Mode:    "agentic",
+		})
+		if err != nil {
+			return wsErrorMsg{text: err.Error()}
+		}
+		return nil
+	}
+}
 
 func sendBranch(conn *websocket.Conn, messageID int64) tea.Cmd {
 	return func() tea.Msg {
@@ -92,7 +114,7 @@ func sendListBranches(conn *websocket.Conn) tea.Cmd {
 
 func sendListSessions(conn *websocket.Conn) tea.Cmd {
 	return func() tea.Msg {
-		err := conn.WriteJSON(channel.InboundMessage{Type: "list_sessions"})
+		err := conn.WriteJSON(channel.InboundMessage{Type: "list_sessions", Channel: "tui"})
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
@@ -193,15 +215,17 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 		case "status":
 			return wsStatusMsg{text: evt.Content}
 		case "session_created":
-			return wsSessionCreatedMsg{sessionID: evt.SessionID}
+			return wsSessionCreatedMsg{sessionID: evt.SessionID, mode: evt.Mode}
+		case "session_continued":
+			return wsSessionContinuedMsg{sessionID: evt.SessionID, mode: evt.Mode}
 		case "branch_created":
 			return wsBranchCreatedMsg{sessionID: evt.SessionID, messageID: evt.MessageID}
 		case "session_switched":
 			return wsSessionSwitchedMsg{sessionID: evt.SessionID}
 		case "branch_list":
-			return wsBranchListMsg{branches: evt.Branches}
+			return wsBranchListMsg{parent: evt.Parent, branches: evt.Branches}
 		case "session_list":
-			return wsSessionListMsg{}
+			return wsSessionListMsg{sessions: evt.Sessions}
 		default:
 			return wsErrorMsg{text: "unknown event: " + evt.Type}
 		}

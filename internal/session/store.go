@@ -56,7 +56,8 @@ func (s *Store) migrate() error {
 	_, err := s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY,
-			platform TEXT NOT NULL,
+			channel TEXT NOT NULL,
+			mode TEXT NOT NULL DEFAULT 'agentic',
 			created_at REAL NOT NULL,
 			updated_at REAL NOT NULL
 		);
@@ -83,14 +84,21 @@ func (s *Store) migrate() error {
 
 		CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	s.db.Exec("ALTER TABLE sessions RENAME COLUMN platform TO channel")
+	s.db.Exec("ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'agentic'")
+
+	return nil
 }
 
-func (s *Store) CreateSession(id, platform string) error {
+func (s *Store) CreateSession(id, channel, mode string) error {
 	now := time.Now().Unix()
 	_, err := s.db.Exec(
-		"INSERT INTO sessions (id, platform, created_at, updated_at) VALUES (?, ?, ?, ?)",
-		id, platform, now, now,
+		"INSERT INTO sessions (id, channel, mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+		id, channel, mode, now, now,
 	)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -307,4 +315,52 @@ func (s *Store) SessionExists(id string) (bool, error) {
 		return false, nil
 	}
 	return exists, err
+}
+
+type SessionMeta struct {
+	ID        string
+	Channel   string
+	Mode      string
+	CreatedAt int64
+	UpdatedAt int64
+}
+
+func (s *Store) GetLastSession(channel, mode string) (string, error) {
+	var id string
+	err := s.db.QueryRow(
+		"SELECT id FROM sessions WHERE channel = ? AND mode = ? ORDER BY updated_at DESC LIMIT 1",
+		channel, mode,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get last session: %w", err)
+	}
+	return id, nil
+}
+
+func (s *Store) GetParentBranch(sessionID string) (*BranchMeta, error) {
+	return s.LoadBranchMeta(sessionID)
+}
+
+func (s *Store) ListSessions(channel string) ([]SessionMeta, error) {
+	rows, err := s.db.Query(
+		"SELECT id, channel, mode, created_at, updated_at FROM sessions WHERE channel = ? ORDER BY updated_at DESC",
+		channel,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []SessionMeta
+	for rows.Next() {
+		var sm SessionMeta
+		if err := rows.Scan(&sm.ID, &sm.Channel, &sm.Mode, &sm.CreatedAt, &sm.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan session: %w", err)
+		}
+		sessions = append(sessions, sm)
+	}
+	return sessions, rows.Err()
 }

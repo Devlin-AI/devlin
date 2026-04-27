@@ -203,7 +203,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.mdWidth = m.viewport.Width - aiPrefixW
 		m.mdRenderer = newMDRenderer(m.mdWidth)
-		return m, readNext(m.conn)
+		return m, tea.Batch(readNext(m.conn), sendNew(m.conn))
 
 	case scrambleTickMsg:
 		if !m.streaming {
@@ -322,6 +322,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case wsSessionCreatedMsg:
+		m.sessionID = msg.sessionID
+		if m.conn != nil {
+			return m, readNext(m.conn)
+		}
+		return m, nil
+
+	case wsSessionContinuedMsg:
 		m.sessionID = msg.sessionID
 		if m.conn != nil {
 			return m, readNext(m.conn)

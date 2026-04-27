@@ -19,7 +19,8 @@ import (
 
 type Session struct {
 	id           string
-	platform     string
+	channel      string
+	mode         string
 	provider     llm.Provider
 	store        *Store
 	model        string
@@ -33,10 +34,10 @@ type Session struct {
 	branchPoint  int64
 }
 
-func New(provider llm.Provider, store *Store, platform string, model string, onEvent func(Event)) (*Session, error) {
+func New(provider llm.Provider, store *Store, ch string, mode string, model string, onEvent func(Event)) (*Session, error) {
 	id := uuid.New().String()
 
-	if err := store.CreateSession(id, platform); err != nil {
+	if err := store.CreateSession(id, ch, mode); err != nil {
 		return nil, err
 	}
 
@@ -45,7 +46,8 @@ func New(provider llm.Provider, store *Store, platform string, model string, onE
 
 	s := &Session{
 		id:           id,
-		platform:     platform,
+		channel:      ch,
+		mode:         mode,
 		provider:     provider,
 		store:        store,
 		model:        model,
@@ -58,8 +60,57 @@ func New(provider llm.Provider, store *Store, platform string, model string, onE
 	return s, nil
 }
 
+func Load(provider llm.Provider, store *Store, sessionID string, model string, onEvent func(Event)) (*Session, error) {
+	history, err := store.LoadFullHistory(sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	meta, err := store.LoadBranchMeta(sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	var parentID string
+	var branchPoint int64
+	if meta != nil {
+		parentID = meta.ParentID
+		branchPoint = meta.ParentMsgID
+	}
+
+	cwd, _ := os.Getwd()
+	sysPrompt := prompt.Build(cwd, tool.All())
+
+	s := &Session{
+		id:           sessionID,
+		provider:     provider,
+		store:        store,
+		model:        model,
+		history:      history,
+		systemPrompt: sysPrompt,
+		onEvent:      onEvent,
+		parentID:     parentID,
+		branchPoint:  branchPoint,
+	}
+
+	row := store.db.QueryRow("SELECT channel, mode FROM sessions WHERE id = ?", sessionID)
+	if err := row.Scan(&s.channel, &s.mode); err != nil {
+		return nil, fmt.Errorf("load session channel/mode: %w", err)
+	}
+
+	return s, nil
+}
+
 func (s *Session) ID() string {
 	return s.id
+}
+
+func (s *Session) Channel() string {
+	return s.channel
+}
+
+func (s *Session) Mode() string {
+	return s.mode
 }
 
 func (s *Session) SetOnEvent(fn func(Event)) {
@@ -100,7 +151,7 @@ func (s *Session) Branch(msgID int64) (*Session, error) {
 
 	branchID := uuid.New().String()
 
-	if err := s.store.CreateSession(branchID, s.platform); err != nil {
+	if err := s.store.CreateSession(branchID, s.channel, s.mode); err != nil {
 		return nil, err
 	}
 
@@ -118,7 +169,8 @@ func (s *Session) Branch(msgID int64) (*Session, error) {
 
 	branch := &Session{
 		id:           branchID,
-		platform:     s.platform,
+		channel:      s.channel,
+		mode:         s.mode,
 		provider:     s.provider,
 		store:        s.store,
 		model:        s.model,
@@ -163,7 +215,8 @@ func (s *Session) SwitchTo(sessionID string) (*Session, error) {
 
 	target := &Session{
 		id:           sessionID,
-		platform:     s.platform,
+		channel:      s.channel,
+		mode:         s.mode,
 		provider:     s.provider,
 		store:        s.store,
 		model:        s.model,
@@ -179,6 +232,10 @@ func (s *Session) SwitchTo(sessionID string) (*Session, error) {
 
 func (s *Session) ListBranches() ([]BranchMeta, error) {
 	return s.store.ListBranches(s.id)
+}
+
+func (s *Session) GetParentBranch() (*BranchMeta, error) {
+	return s.store.GetParentBranch(s.id)
 }
 
 func (s *Session) ProcessMessage(content string) {
