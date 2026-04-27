@@ -29,6 +29,8 @@ type Session struct {
 	cancelMu     sync.Mutex
 	onEvent      func(Event)
 	cancel       context.CancelFunc
+	parentID     string
+	branchPoint  int64
 }
 
 func New(provider llm.Provider, store *Store, platform string, model string, onEvent func(Event)) (*Session, error) {
@@ -60,6 +62,12 @@ func (s *Session) ID() string {
 	return s.id
 }
 
+func (s *Session) SetOnEvent(fn func(Event)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onEvent = fn
+}
+
 func (s *Session) IsExpired(timeout time.Duration) bool {
 	return false
 }
@@ -76,6 +84,101 @@ func (s *Session) setCancel(fn context.CancelFunc) {
 	s.cancelMu.Lock()
 	defer s.cancelMu.Unlock()
 	s.cancel = fn
+}
+
+func (s *Session) ParentID() string {
+	return s.parentID
+}
+
+func (s *Session) BranchPoint() int64 {
+	return s.branchPoint
+}
+
+func (s *Session) Branch(msgID int64) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	branchID := uuid.New().String()
+
+	if err := s.store.CreateSession(branchID, s.platform); err != nil {
+		return nil, err
+	}
+
+	if err := s.store.CreateBranch(branchID, s.id, msgID); err != nil {
+		return nil, err
+	}
+
+	parentHistory, err := s.store.LoadMessagesUpToID(s.id, msgID)
+	if err != nil {
+		return nil, err
+	}
+
+	historyCopy := make([]message.Message, len(parentHistory))
+	copy(historyCopy, parentHistory)
+
+	branch := &Session{
+		id:           branchID,
+		platform:     s.platform,
+		provider:     s.provider,
+		store:        s.store,
+		model:        s.model,
+		history:      historyCopy,
+		systemPrompt: s.systemPrompt,
+		onEvent:      s.onEvent,
+		parentID:     s.id,
+		branchPoint:  msgID,
+	}
+
+	return branch, nil
+}
+
+func (s *Session) SwitchTo(sessionID string) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	exists, err := s.store.SessionExists(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+
+	history, err := s.store.LoadFullHistory(sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	meta, err := s.store.LoadBranchMeta(sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	var parentID string
+	var branchPoint int64
+	if meta != nil {
+		parentID = meta.ParentID
+		branchPoint = meta.ParentMsgID
+	}
+
+	target := &Session{
+		id:           sessionID,
+		platform:     s.platform,
+		provider:     s.provider,
+		store:        s.store,
+		model:        s.model,
+		history:      history,
+		systemPrompt: s.systemPrompt,
+		onEvent:      s.onEvent,
+		parentID:     parentID,
+		branchPoint:  branchPoint,
+	}
+
+	return target, nil
+}
+
+func (s *Session) ListBranches() ([]BranchMeta, error) {
+	return s.store.ListBranches(s.id)
 }
 
 func (s *Session) ProcessMessage(content string) {

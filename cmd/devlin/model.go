@@ -42,6 +42,7 @@ type model struct {
 	reconnecting     bool
 	reconnectDots    int
 	reconnectAttempt int
+	sessionID        string
 }
 
 func initialModel() model {
@@ -306,6 +307,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, message{role: "status", text: msg.text})
 		}
 		refreshView(&m)
+		if m.conn != nil {
+			return m, readNext(m.conn)
+		}
+		return m, nil
+
+	case wsBranchCreatedMsg:
+		m.sessionID = msg.sessionID
+		refreshView(&m)
+		if m.conn != nil {
+			return m, readNext(m.conn)
+		}
+		return m, nil
+
+	case wsSessionCreatedMsg:
+		m.sessionID = msg.sessionID
+		if m.conn != nil {
+			return m, readNext(m.conn)
+		}
+		return m, nil
+
+	case wsSessionSwitchedMsg:
+		m.sessionID = msg.sessionID
+		m.messages = nil
+		refreshView(&m)
+		if m.conn != nil {
+			return m, readNext(m.conn)
+		}
+		return m, nil
+
+	case wsBranchListMsg:
+		refreshView(&m)
+		if m.conn != nil {
+			return m, readNext(m.conn)
+		}
+		return m, nil
+
+	case wsSessionListMsg:
 		if m.conn != nil {
 			return m, readNext(m.conn)
 		}

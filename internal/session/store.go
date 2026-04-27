@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/devlin-ai/devlin/internal/logger"
+	"github.com/devlin-ai/devlin/internal/message"
 	_ "modernc.org/sqlite"
 )
 
@@ -72,6 +73,12 @@ func (s *Store) migrate() error {
 			model TEXT,
 			usage TEXT,
 			timestamp REAL NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS branches (
+			session_id    TEXT PRIMARY KEY REFERENCES sessions(id),
+			parent_id     TEXT REFERENCES sessions(id),
+			parent_msg_id INTEGER REFERENCES messages(id)
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
@@ -144,4 +151,160 @@ func marshalUsage(v interface{}) []byte {
 		return nil
 	}
 	return b
+}
+
+type BranchMeta struct {
+	SessionID   string
+	ParentID    string
+	ParentMsgID int64
+}
+
+func (s *Store) CreateBranch(sessionID, parentID string, parentMsgID int64) error {
+	_, err := s.db.Exec(
+		"INSERT INTO branches (session_id, parent_id, parent_msg_id) VALUES (?, ?, ?)",
+		sessionID, parentID, parentMsgID,
+	)
+	if err != nil {
+		return fmt.Errorf("create branch: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) LoadBranchMeta(sessionID string) (*BranchMeta, error) {
+	row := s.db.QueryRow(
+		"SELECT session_id, parent_id, parent_msg_id FROM branches WHERE session_id = ?",
+		sessionID,
+	)
+	var b BranchMeta
+	var parentID sql.NullString
+	var parentMsgID sql.NullInt64
+	if err := row.Scan(&b.SessionID, &parentID, &parentMsgID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("load branch meta: %w", err)
+	}
+	if parentID.Valid {
+		b.ParentID = parentID.String
+	}
+	if parentMsgID.Valid {
+		b.ParentMsgID = parentMsgID.Int64
+	}
+	return &b, nil
+}
+
+func (s *Store) LoadMessagesForSession(sessionID string) ([]message.Message, error) {
+	rows, err := s.db.Query(
+		"SELECT id, session_id, role, content, tool_calls, tool_call_id FROM messages WHERE session_id = ? ORDER BY id",
+		sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load messages for session: %w", err)
+	}
+	defer rows.Close()
+
+	var msgs []message.Message
+	for rows.Next() {
+		var msg message.Message
+		var toolCallsJSON []byte
+		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &toolCallsJSON, &msg.ToolCallID); err != nil {
+			return nil, fmt.Errorf("scan message: %w", err)
+		}
+		if toolCallsJSON != nil {
+			json.Unmarshal(toolCallsJSON, &msg.ToolCalls)
+		}
+		msgs = append(msgs, msg)
+	}
+	return msgs, rows.Err()
+}
+
+func (s *Store) LoadMessagesUpToID(sessionID string, upToMsgID int64) ([]message.Message, error) {
+	rows, err := s.db.Query(
+		"SELECT id, session_id, role, content, tool_calls, tool_call_id FROM messages WHERE session_id = ? AND id <= ? ORDER BY id",
+		sessionID, upToMsgID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load messages up to id: %w", err)
+	}
+	defer rows.Close()
+
+	var msgs []message.Message
+	for rows.Next() {
+		var msg message.Message
+		var toolCallsJSON []byte
+		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &toolCallsJSON, &msg.ToolCallID); err != nil {
+			return nil, fmt.Errorf("scan message: %w", err)
+		}
+		if toolCallsJSON != nil {
+			json.Unmarshal(toolCallsJSON, &msg.ToolCalls)
+		}
+		msgs = append(msgs, msg)
+	}
+	return msgs, rows.Err()
+}
+
+func (s *Store) LoadFullHistory(sessionID string) ([]message.Message, error) {
+	var allMsgs []message.Message
+
+	currentID := sessionID
+	for currentID != "" {
+		meta, err := s.LoadBranchMeta(currentID)
+		if err != nil {
+			return nil, err
+		}
+
+		var msgs []message.Message
+		if meta != nil && meta.ParentID != "" {
+			msgs, err = s.LoadMessagesUpToID(currentID, 0)
+			if err != nil {
+				return nil, err
+			}
+			currentID = meta.ParentID
+
+			parentMsgs, err := s.LoadMessagesUpToID(meta.ParentID, meta.ParentMsgID)
+			if err != nil {
+				return nil, err
+			}
+			allMsgs = append(parentMsgs, msgs...)
+		} else {
+			msgs, err = s.LoadMessagesForSession(currentID)
+			if err != nil {
+				return nil, err
+			}
+			allMsgs = msgs
+			currentID = ""
+		}
+	}
+
+	return allMsgs, nil
+}
+
+func (s *Store) ListBranches(sessionID string) ([]BranchMeta, error) {
+	rows, err := s.db.Query(
+		"SELECT b.session_id, b.parent_id, b.parent_msg_id FROM branches b WHERE b.parent_id = ?",
+		sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list branches: %w", err)
+	}
+	defer rows.Close()
+
+	var branches []BranchMeta
+	for rows.Next() {
+		var b BranchMeta
+		if err := rows.Scan(&b.SessionID, &b.ParentID, &b.ParentMsgID); err != nil {
+			return nil, fmt.Errorf("scan branch: %w", err)
+		}
+		branches = append(branches, b)
+	}
+	return branches, rows.Err()
+}
+
+func (s *Store) SessionExists(id string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow("SELECT 1 FROM sessions WHERE id = ?", id).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return exists, err
 }

@@ -14,16 +14,25 @@ import (
 )
 
 type wsMessage struct {
-	Type    string `json:"type"`
-	Content string `json:"content"`
+	Type      string `json:"type"`
+	Content   string `json:"content"`
+	MessageID int64  `json:"message_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 type wsEvent struct {
-	Type     string `json:"type"`
-	Content  string `json:"content"`
-	ToolName string `json:"tool_name,omitempty"`
-	ToolID   string `json:"tool_id,omitempty"`
-	Display  string `json:"display,omitempty"`
+	Type      string `json:"type"`
+	Content   string `json:"content"`
+	ToolName  string `json:"tool_name,omitempty"`
+	ToolID    string `json:"tool_id,omitempty"`
+	Display   string `json:"display,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	MessageID int64  `json:"message_id,omitempty"`
+}
+
+type branchListItem struct {
+	SessionID   string `json:"session_id"`
+	ParentMsgID int64  `json:"parent_msg_id"`
 }
 
 type wsConnectedMsg struct{ conn *websocket.Conn }
@@ -56,6 +65,61 @@ type reconnectAttemptMsg struct{}
 
 type wsErrorMsg struct{ text string }
 type scrambleTickMsg struct{}
+
+type wsBranchCreatedMsg struct {
+	sessionID string
+	messageID int64
+}
+type wsSessionCreatedMsg struct {
+	sessionID string
+}
+type wsSessionSwitchedMsg struct {
+	sessionID string
+}
+type wsBranchListMsg struct {
+	branches []branchListItem
+}
+type wsSessionListMsg struct{}
+
+func sendBranch(conn *websocket.Conn, messageID int64) tea.Cmd {
+	return func() tea.Msg {
+		err := conn.WriteJSON(wsMessage{Type: "branch", MessageID: messageID})
+		if err != nil {
+			return wsErrorMsg{text: err.Error()}
+		}
+		return nil
+	}
+}
+
+func sendSwitchSession(conn *websocket.Conn, sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		err := conn.WriteJSON(wsMessage{Type: "switch_session", SessionID: sessionID})
+		if err != nil {
+			return wsErrorMsg{text: err.Error()}
+		}
+		return nil
+	}
+}
+
+func sendListBranches(conn *websocket.Conn) tea.Cmd {
+	return func() tea.Msg {
+		err := conn.WriteJSON(wsMessage{Type: "list_branches"})
+		if err != nil {
+			return wsErrorMsg{text: err.Error()}
+		}
+		return nil
+	}
+}
+
+func sendListSessions(conn *websocket.Conn) tea.Cmd {
+	return func() tea.Msg {
+		err := conn.WriteJSON(wsMessage{Type: "list_sessions"})
+		if err != nil {
+			return wsErrorMsg{text: err.Error()}
+		}
+		return nil
+	}
+}
 
 func sendCancel(conn *websocket.Conn) tea.Cmd {
 	return func() tea.Msg {
@@ -149,6 +213,24 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 			return wsErrorMsg{text: evt.Content}
 		case "status":
 			return wsStatusMsg{text: evt.Content}
+		case "session_created":
+			return wsSessionCreatedMsg{sessionID: evt.SessionID}
+		case "branch_created":
+			return wsBranchCreatedMsg{sessionID: evt.SessionID, messageID: evt.MessageID}
+		case "session_switched":
+			return wsSessionSwitchedMsg{sessionID: evt.SessionID}
+		case "branch_list":
+			var branches []branchListItem
+			raw, _ := json.Marshal(evt)
+			var parsed struct {
+				Branches []branchListItem `json:"branches"`
+			}
+			if json.Unmarshal(raw, &parsed) == nil {
+				branches = parsed.Branches
+			}
+			return wsBranchListMsg{branches: branches}
+		case "session_list":
+			return wsSessionListMsg{}
 		default:
 			return wsErrorMsg{text: "unknown event: " + evt.Type}
 		}

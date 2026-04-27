@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -80,26 +79,92 @@ func main() {
 			return
 		}
 
-		for {
-			_, raw, err := conn.ReadMessage()
-			if err != nil {
-				log.Error("websocket read failed", "error", err)
-				return
-			}
+		adapter := &wsAdapter{conn: conn, sessionID: sess.ID()}
+		conn.WriteJSON(outgoingEvent{
+			Type:      "session_created",
+			SessionID: sess.ID(),
+		})
+		ch, err := adapter.Receive()
+		if err != nil {
+			log.Error("failed to start adapter receive", "error", err)
+			return
+		}
 
-			var msg incomingMessage
-			if err := json.Unmarshal(raw, &msg); err != nil {
-				log.Warn("failed to unmarshal message", "error", err)
-				continue
-			}
-
-			if msg.Type == "cancel" {
+		for msg := range ch {
+			switch msg.Type {
+			case "cancel":
 				log.Info("cancel requested")
 				sess.Cancel()
-				continue
+			case "branch":
+				branch, err := sess.Branch(msg.MessageID)
+				if err != nil {
+					log.Error("branch failed", "error", err)
+					conn.WriteJSON(outgoingEvent{Type: "error", Content: err.Error()})
+					continue
+				}
+				sess = branch
+				adapter.SetSessionID(branch.ID())
+				sess.SetOnEvent(func(evt session.Event) {
+					conn.WriteJSON(outgoingEvent{
+						Type:     evt.Type,
+						Content:  evt.Content,
+						ToolName: evt.ToolName,
+						ToolID:   evt.ToolID,
+						Display:  evt.Display,
+					})
+				})
+				conn.WriteJSON(outgoingEvent{
+					Type:      "branch_created",
+					SessionID: branch.ID(),
+					MessageID: msg.MessageID,
+				})
+			case "switch_session":
+				switched, err := sess.SwitchTo(msg.SessionID)
+				if err != nil {
+					log.Error("switch session failed", "error", err)
+					conn.WriteJSON(outgoingEvent{Type: "error", Content: err.Error()})
+					continue
+				}
+				sess = switched
+				adapter.SetSessionID(switched.ID())
+				sess.SetOnEvent(func(evt session.Event) {
+					conn.WriteJSON(outgoingEvent{
+						Type:     evt.Type,
+						Content:  evt.Content,
+						ToolName: evt.ToolName,
+						ToolID:   evt.ToolID,
+						Display:  evt.Display,
+					})
+				})
+				conn.WriteJSON(outgoingEvent{
+					Type:      "session_switched",
+					SessionID: switched.ID(),
+				})
+			case "list_branches":
+				branches, err := sess.ListBranches()
+				if err != nil {
+					log.Error("list branches failed", "error", err)
+					conn.WriteJSON(outgoingEvent{Type: "error", Content: err.Error()})
+					continue
+				}
+				var items []branchListItem
+				for _, b := range branches {
+					items = append(items, branchListItem{
+						SessionID:   b.SessionID,
+						ParentMsgID: b.ParentMsgID,
+					})
+				}
+				conn.WriteJSON(outgoingEvent{
+					Type:     "branch_list",
+					Branches: items,
+				})
+			case "list_sessions":
+				conn.WriteJSON(outgoingEvent{
+					Type: "session_list",
+				})
+			default:
+				go sess.ProcessMessage(msg.Content)
 			}
-
-			go sess.ProcessMessage(msg.Content)
 		}
 	})
 
