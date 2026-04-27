@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/devlin-ai/devlin/internal/channel"
 	"github.com/devlin-ai/devlin/internal/tool"
 	"github.com/gorilla/websocket"
 )
@@ -128,7 +129,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
 
-				err := m.conn.WriteJSON(wsMessage{Content: m.messages[len(m.messages)-2].text})
+				err := m.conn.WriteJSON(channel.InboundMessage{Content: m.messages[len(m.messages)-2].text})
 				if err != nil {
 					m.streaming = false
 					m.messages[len(m.messages)-1] = message{role: "error", text: err.Error()}

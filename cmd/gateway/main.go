@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/devlin-ai/devlin/internal/channel"
 	"github.com/devlin-ai/devlin/internal/config"
 	"github.com/devlin-ai/devlin/internal/llm"
 	"github.com/devlin-ai/devlin/internal/logger"
@@ -15,7 +17,18 @@ import (
 	_ "github.com/devlin-ai/devlin/internal/tool"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/gorilla/websocket"
 )
+
+func send(conn *websocket.Conn, msg channel.OutboundMessage) {
+	conn.WriteJSON(msg)
+}
+
+func makeOnEvent(conn *websocket.Conn) func(session.Event) {
+	return func(evt session.Event) {
+		send(conn, evt)
+	}
+}
 
 func main() {
 	logger.Init()
@@ -65,32 +78,28 @@ func main() {
 		}
 		defer conn.Close()
 
-		sess, err := session.New(provider, store, "tui", modelName, func(evt session.Event) {
-			conn.WriteJSON(outgoingEvent{
-				Type:     evt.Type,
-				Content:  evt.Content,
-				ToolName: evt.ToolName,
-				ToolID:   evt.ToolID,
-				Display:  evt.Display,
-			})
-		})
+		sess, err := session.New(provider, store, "tui", modelName, makeOnEvent(conn))
 		if err != nil {
 			log.Error("failed to create session", "error", err)
 			return
 		}
 
-		adapter := &wsAdapter{conn: conn, sessionID: sess.ID()}
-		conn.WriteJSON(outgoingEvent{
+		send(conn, channel.OutboundMessage{
 			Type:      "session_created",
 			SessionID: sess.ID(),
 		})
-		ch, err := adapter.Receive()
-		if err != nil {
-			log.Error("failed to start adapter receive", "error", err)
-			return
-		}
 
-		for msg := range ch {
+		for {
+			_, raw, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+
+			var msg channel.InboundMessage
+			if err := json.Unmarshal(raw, &msg); err != nil {
+				continue
+			}
+
 			switch msg.Type {
 			case "cancel":
 				log.Info("cancel requested")
@@ -99,21 +108,12 @@ func main() {
 				branch, err := sess.Branch(msg.MessageID)
 				if err != nil {
 					log.Error("branch failed", "error", err)
-					conn.WriteJSON(outgoingEvent{Type: "error", Content: err.Error()})
+					send(conn, channel.OutboundMessage{Type: "error", Content: err.Error()})
 					continue
 				}
 				sess = branch
-				adapter.SetSessionID(branch.ID())
-				sess.SetOnEvent(func(evt session.Event) {
-					conn.WriteJSON(outgoingEvent{
-						Type:     evt.Type,
-						Content:  evt.Content,
-						ToolName: evt.ToolName,
-						ToolID:   evt.ToolID,
-						Display:  evt.Display,
-					})
-				})
-				conn.WriteJSON(outgoingEvent{
+				sess.SetOnEvent(makeOnEvent(conn))
+				send(conn, channel.OutboundMessage{
 					Type:      "branch_created",
 					SessionID: branch.ID(),
 					MessageID: msg.MessageID,
@@ -122,44 +122,35 @@ func main() {
 				switched, err := sess.SwitchTo(msg.SessionID)
 				if err != nil {
 					log.Error("switch session failed", "error", err)
-					conn.WriteJSON(outgoingEvent{Type: "error", Content: err.Error()})
+					send(conn, channel.OutboundMessage{Type: "error", Content: err.Error()})
 					continue
 				}
 				sess = switched
-				adapter.SetSessionID(switched.ID())
-				sess.SetOnEvent(func(evt session.Event) {
-					conn.WriteJSON(outgoingEvent{
-						Type:     evt.Type,
-						Content:  evt.Content,
-						ToolName: evt.ToolName,
-						ToolID:   evt.ToolID,
-						Display:  evt.Display,
-					})
-				})
-				conn.WriteJSON(outgoingEvent{
+				sess.SetOnEvent(makeOnEvent(conn))
+				send(conn, channel.OutboundMessage{
 					Type:      "session_switched",
 					SessionID: switched.ID(),
 				})
 			case "list_branches":
-				branches, err := sess.ListBranches()
+				branchMetas, err := sess.ListBranches()
 				if err != nil {
 					log.Error("list branches failed", "error", err)
-					conn.WriteJSON(outgoingEvent{Type: "error", Content: err.Error()})
+					send(conn, channel.OutboundMessage{Type: "error", Content: err.Error()})
 					continue
 				}
-				var items []branchListItem
-				for _, b := range branches {
-					items = append(items, branchListItem{
+				infos := make([]channel.BranchInfo, len(branchMetas))
+				for i, b := range branchMetas {
+					infos[i] = channel.BranchInfo{
 						SessionID:   b.SessionID,
 						ParentMsgID: b.ParentMsgID,
-					})
+					}
 				}
-				conn.WriteJSON(outgoingEvent{
+				send(conn, channel.OutboundMessage{
 					Type:     "branch_list",
-					Branches: items,
+					Branches: infos,
 				})
 			case "list_sessions":
-				conn.WriteJSON(outgoingEvent{
+				send(conn, channel.OutboundMessage{
 					Type: "session_list",
 				})
 			default:

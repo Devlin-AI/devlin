@@ -8,32 +8,11 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/devlin-ai/devlin/internal/channel"
 	"github.com/devlin-ai/devlin/internal/config"
 	"github.com/devlin-ai/devlin/internal/tool"
 	"github.com/gorilla/websocket"
 )
-
-type wsMessage struct {
-	Type      string `json:"type"`
-	Content   string `json:"content"`
-	MessageID int64  `json:"message_id,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-}
-
-type wsEvent struct {
-	Type      string `json:"type"`
-	Content   string `json:"content"`
-	ToolName  string `json:"tool_name,omitempty"`
-	ToolID    string `json:"tool_id,omitempty"`
-	Display   string `json:"display,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	MessageID int64  `json:"message_id,omitempty"`
-}
-
-type branchListItem struct {
-	SessionID   string `json:"session_id"`
-	ParentMsgID int64  `json:"parent_msg_id"`
-}
 
 type wsConnectedMsg struct{ conn *websocket.Conn }
 type wsThinkingMsg struct{ text string }
@@ -77,13 +56,13 @@ type wsSessionSwitchedMsg struct {
 	sessionID string
 }
 type wsBranchListMsg struct {
-	branches []branchListItem
+	branches []channel.BranchInfo
 }
 type wsSessionListMsg struct{}
 
 func sendBranch(conn *websocket.Conn, messageID int64) tea.Cmd {
 	return func() tea.Msg {
-		err := conn.WriteJSON(wsMessage{Type: "branch", MessageID: messageID})
+		err := conn.WriteJSON(channel.InboundMessage{Type: "branch", MessageID: messageID})
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
@@ -93,7 +72,7 @@ func sendBranch(conn *websocket.Conn, messageID int64) tea.Cmd {
 
 func sendSwitchSession(conn *websocket.Conn, sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		err := conn.WriteJSON(wsMessage{Type: "switch_session", SessionID: sessionID})
+		err := conn.WriteJSON(channel.InboundMessage{Type: "switch_session", SessionID: sessionID})
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
@@ -103,7 +82,7 @@ func sendSwitchSession(conn *websocket.Conn, sessionID string) tea.Cmd {
 
 func sendListBranches(conn *websocket.Conn) tea.Cmd {
 	return func() tea.Msg {
-		err := conn.WriteJSON(wsMessage{Type: "list_branches"})
+		err := conn.WriteJSON(channel.InboundMessage{Type: "list_branches"})
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
@@ -113,7 +92,7 @@ func sendListBranches(conn *websocket.Conn) tea.Cmd {
 
 func sendListSessions(conn *websocket.Conn) tea.Cmd {
 	return func() tea.Msg {
-		err := conn.WriteJSON(wsMessage{Type: "list_sessions"})
+		err := conn.WriteJSON(channel.InboundMessage{Type: "list_sessions"})
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
@@ -123,7 +102,7 @@ func sendListSessions(conn *websocket.Conn) tea.Cmd {
 
 func sendCancel(conn *websocket.Conn) tea.Cmd {
 	return func() tea.Msg {
-		err := conn.WriteJSON(wsMessage{Type: "cancel"})
+		err := conn.WriteJSON(channel.InboundMessage{Type: "cancel"})
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
@@ -177,7 +156,7 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 			return wsErrorMsg{text: err.Error()}
 		}
 
-		var evt wsEvent
+		var evt channel.OutboundMessage
 		if err := json.Unmarshal(raw, &evt); err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
@@ -220,15 +199,7 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 		case "session_switched":
 			return wsSessionSwitchedMsg{sessionID: evt.SessionID}
 		case "branch_list":
-			var branches []branchListItem
-			raw, _ := json.Marshal(evt)
-			var parsed struct {
-				Branches []branchListItem `json:"branches"`
-			}
-			if json.Unmarshal(raw, &parsed) == nil {
-				branches = parsed.Branches
-			}
-			return wsBranchListMsg{branches: branches}
+			return wsBranchListMsg{branches: evt.Branches}
 		case "session_list":
 			return wsSessionListMsg{}
 		default:
