@@ -53,18 +53,22 @@ func renderToolDisplay(toolName string, d tool.ToolDisplay, bodyW int, prefixW i
 }
 
 func renderBlock(block tool.DisplayBlock) []string {
+	content := processCarriageReturns(block.Content)
+	content = strings.TrimRight(content, "\n")
+	if content == "" {
+		return nil
+	}
+	raw := strings.Split(content, "\n")
 	switch block.Type {
 	case tool.DisplayDiff:
-		return renderDiffLines(block.Content)
+		return renderDiffLines(strings.Join(raw, "\n"))
 	case tool.DisplayCode:
-		raw := strings.Split(block.Content, "\n")
 		lines := make([]string, len(raw))
 		for i, l := range raw {
 			lines[i] = toolCodeStyle.Render(l)
 		}
 		return lines
 	default:
-		raw := strings.Split(block.Content, "\n")
 		lines := make([]string, len(raw))
 		for i, l := range raw {
 			lines[i] = toolBodyStyle.Render(l)

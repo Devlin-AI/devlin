@@ -396,7 +396,7 @@ func (m model) renderMessages() string {
 	w := m.viewport.Width
 
 	for i, msg := range m.messages {
-		if msg.role == "assistant" && msg.text == "" && msg.mdBody == "" && i != len(m.messages)-1 {
+		if msg.role == "assistant" && msg.text == "" && msg.mdBody == "" && !(m.streaming && i == len(m.messages)-1) {
 			continue
 		}
 
@@ -433,7 +433,7 @@ func (m model) renderMessages() string {
 				body = renderToolDisplay(msg.toolName, msg.display, bodyW, prefixW)
 			}
 		} else {
-			wrapped := ansi.Wrap(msg.text, bodyW, " ")
+			wrapped := ansi.Wrap(strings.TrimRight(msg.text, "\n"), bodyW, " ")
 			body = strings.Join(strings.Split(wrapped, "\n"), "\n"+strings.Repeat(" ", prefixW))
 		}
 
@@ -497,6 +497,6 @@ func (m *model) renderAllMarkdown(force bool) {
 		if err != nil {
 			continue
 		}
-		m.messages[i].mdBody = strings.TrimRight(rendered, "\n")
+		m.messages[i].mdBody = strings.Trim(rendered, "\n")
 	}
 }

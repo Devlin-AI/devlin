@@ -339,7 +339,8 @@ func (s *Session) processLoop() {
 				case message.StreamEventThinking:
 					thinkingText += evt.Token
 					s.sendEvent(Event{Type: "thinking", Content: evt.Token})
-				case message.StreamEventToolStart:
+			case message.StreamEventToolStart:
+				if evt.ToolID != "" {
 					display := string(marshalToolCallDisplay(tool.ToolDisplay{}))
 					s.sendEvent(Event{
 						Type:     "tool_start",
@@ -348,16 +349,14 @@ func (s *Session) processLoop() {
 						ToolID:   evt.ToolID,
 						Display:  display,
 					})
-
-					if evt.ToolID != "" {
-						toolCalls = append(toolCalls, toolCall{
-							ID:   evt.ToolID,
-							Name: evt.ToolName,
-							Args: evt.Token,
-						})
-					} else if len(toolCalls) > 0 {
-						toolCalls[len(toolCalls)-1].Args += evt.Token
-					}
+					toolCalls = append(toolCalls, toolCall{
+						ID:   evt.ToolID,
+						Name: evt.ToolName,
+						Args: evt.Token,
+					})
+				} else if len(toolCalls) > 0 {
+					toolCalls[len(toolCalls)-1].Args += evt.Token
+				}
 				case message.StreamEventError:
 					if ctx.Err() != nil {
 						s.sendEvent(Event{Type: "cancelled"})
@@ -450,6 +449,14 @@ func (s *Session) processLoop() {
 				s.completeToolCall(tc, output, tool.ToolDisplay{Body: []tool.DisplayBlock{{Type: tool.DisplayText, Content: output}}})
 				continue
 			}
+
+			initialDisp := t.Display(tc.Args, "")
+			initialDisp.Body = nil
+			s.sendEvent(Event{
+				Type:    "tool_output",
+				ToolID:  tc.ID,
+				Display: string(marshalToolCallDisplay(initialDisp)),
+			})
 
 			if se, ok := t.(tool.StreamingExecutor); ok {
 				pending := ""
