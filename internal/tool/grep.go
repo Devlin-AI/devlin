@@ -308,7 +308,8 @@ func (GrepTool) Display(args, output string) ToolDisplay {
 	return disp
 }
 
-func (GrepTool) Core() bool { return false }
+func (GrepTool) Core() bool                { return false }
+func (GrepTool) ConcurrencySafe() bool     { return true }
 func (GrepTool) PromptSnippet() string {
 	return "grep — Search file contents by regex pattern. Returns matching files and line numbers."
 }

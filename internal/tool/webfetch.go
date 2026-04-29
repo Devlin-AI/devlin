@@ -401,7 +401,8 @@ func (WebFetchTool) Display(args, output string) ToolDisplay {
 	return disp
 }
 
-func (WebFetchTool) Core() bool { return false }
+func (WebFetchTool) Core() bool                { return false }
+func (WebFetchTool) ConcurrencySafe() bool     { return true }
 func (WebFetchTool) PromptSnippet() string {
 	return "webfetch — Fetch and convert a URL to markdown/text/html."
 }

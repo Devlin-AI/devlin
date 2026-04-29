@@ -40,3 +40,7 @@ type Tool interface {
 type StreamingExecutor interface {
 	StreamingExecute(ctx context.Context, args json.RawMessage, onChunk func(chunk string)) (string, error)
 }
+
+type ConcurrencySafe interface {
+	ConcurrencySafe() bool
+}

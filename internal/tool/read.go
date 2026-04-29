@@ -144,7 +144,8 @@ func (ReadTool) Display(args, output string) ToolDisplay {
 	return ToolDisplay{Title: out.Title}
 }
 
-func (ReadTool) Core() bool { return true }
+func (ReadTool) Core() bool                { return true }
+func (ReadTool) ConcurrencySafe() bool     { return true }
 func (ReadTool) PromptSnippet() string {
 	return "read — Read file or directory contents. Supports offset/limit for large files."
 }

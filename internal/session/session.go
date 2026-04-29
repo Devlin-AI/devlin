@@ -28,6 +28,7 @@ type Session struct {
 	systemPrompt string
 	mu           sync.Mutex
 	cancelMu     sync.Mutex
+	historyMu    sync.Mutex
 	onEvent      func(Event)
 	cancel       context.CancelFunc
 	parentID     string
@@ -436,75 +437,29 @@ func (s *Session) processLoop() {
 			return
 		}
 
-		for _, tc := range toolCalls {
+		groups := s.partitionToolCalls(toolCalls)
+		for _, g := range groups {
 			if ctx.Err() != nil {
 				s.sendEvent(Event{Type: "cancelled"})
 				s.history = s.history[:len(s.history)-1]
 				return
 			}
 
-			t, ok := tool.Get(tc.Name)
-			if !ok {
-				output := fmt.Sprintf("error: unknown tool %q", tc.Name)
-				s.completeToolCall(tc, output, tool.ToolDisplay{Body: []tool.DisplayBlock{{Type: tool.DisplayText, Content: output}}})
-				continue
-			}
-
-			initialDisp := t.Display(tc.Args, "")
-			initialDisp.Body = nil
-			s.sendEvent(Event{
-				Type:    "tool_output",
-				ToolID:  tc.ID,
-				Display: string(marshalToolCallDisplay(initialDisp)),
-			})
-
-			if se, ok := t.(tool.StreamingExecutor); ok {
-				pending := ""
-				const flushAt = 100
-
-				sendPending := func() {
-					if pending == "" {
-						return
-					}
-					s.sendEvent(Event{
-						Type:    "tool_output",
-						Content: pending,
-						ToolID:  tc.ID,
-					})
-					pending = ""
+			if g.safe && len(g.calls) > 1 {
+				var wg sync.WaitGroup
+				for _, tc := range g.calls {
+					wg.Add(1)
+					go func(tc toolCall) {
+						defer wg.Done()
+						s.executeTool(ctx, tc)
+					}(tc)
 				}
-
-				finalJSON, err := se.StreamingExecute(
-					ctx, json.RawMessage(tc.Args),
-					func(chunk string) {
-						pending += chunk
-						if len(pending) >= flushAt {
-							sendPending()
-						}
-					},
-				)
-				sendPending()
-
-				if err != nil {
-					finalJSON = fmt.Sprintf("error: %v", err)
+				wg.Wait()
+			} else {
+				for _, tc := range g.calls {
+					s.executeTool(ctx, tc)
 				}
-
-				s.completeToolCall(tc, finalJSON, t.Display(tc.Args, finalJSON))
-
-				if ctx.Err() != nil {
-					s.sendEvent(Event{Type: "cancelled"})
-					s.history = s.history[:len(s.history)-1]
-					return
-				}
-				continue
 			}
-
-			output, err := t.Execute(ctx, json.RawMessage(tc.Args))
-			if err != nil {
-				output = fmt.Sprintf("error: %v\n%s", err, output)
-			}
-
-			s.completeToolCall(tc, output, t.Display(tc.Args, output))
 
 			if ctx.Err() != nil {
 				s.sendEvent(Event{Type: "cancelled"})
@@ -513,6 +468,102 @@ func (s *Session) processLoop() {
 			}
 		}
 	}
+}
+
+type toolGroup struct {
+	calls []toolCall
+	safe  bool
+}
+
+func (s *Session) partitionToolCalls(calls []toolCall) []toolGroup {
+	if len(calls) == 0 {
+		return nil
+	}
+	var groups []toolGroup
+	safe := isToolSafe(calls[0])
+	current := toolGroup{calls: []toolCall{calls[0]}, safe: safe}
+	for _, tc := range calls[1:] {
+		ts := isToolSafe(tc)
+		if ts == current.safe {
+			current.calls = append(current.calls, tc)
+		} else {
+			groups = append(groups, current)
+			current = toolGroup{calls: []toolCall{tc}, safe: ts}
+		}
+	}
+	groups = append(groups, current)
+	return groups
+}
+
+func isToolSafe(tc toolCall) bool {
+	t, ok := tool.Get(tc.Name)
+	if !ok {
+		return false
+	}
+	cs, ok := t.(tool.ConcurrencySafe)
+	if !ok {
+		return false
+	}
+	return cs.ConcurrencySafe()
+}
+
+func (s *Session) executeTool(ctx context.Context, tc toolCall) {
+	t, ok := tool.Get(tc.Name)
+	if !ok {
+		output := fmt.Sprintf("error: unknown tool %q", tc.Name)
+		s.completeToolCall(tc, output, tool.ToolDisplay{Body: []tool.DisplayBlock{{Type: tool.DisplayText, Content: output}}})
+		return
+	}
+
+	initialDisp := t.Display(tc.Args, "")
+	initialDisp.Body = nil
+	s.sendEvent(Event{
+		Type:    "tool_output",
+		ToolID:  tc.ID,
+		Display: string(marshalToolCallDisplay(initialDisp)),
+	})
+
+	if se, ok := t.(tool.StreamingExecutor); ok {
+		pending := ""
+		const flushAt = 100
+
+		sendPending := func() {
+			if pending == "" {
+				return
+			}
+			s.sendEvent(Event{
+				Type:    "tool_output",
+				Content: pending,
+				ToolID:  tc.ID,
+			})
+			pending = ""
+		}
+
+		finalJSON, err := se.StreamingExecute(
+			ctx, json.RawMessage(tc.Args),
+			func(chunk string) {
+				pending += chunk
+				if len(pending) >= flushAt {
+					sendPending()
+				}
+			},
+		)
+		sendPending()
+
+		if err != nil {
+			finalJSON = fmt.Sprintf("error: %v", err)
+		}
+
+		s.completeToolCall(tc, finalJSON, t.Display(tc.Args, finalJSON))
+		return
+	}
+
+	output, err := t.Execute(ctx, json.RawMessage(tc.Args))
+	if err != nil {
+		output = fmt.Sprintf("error: %v\n%s", err, output)
+	}
+
+	s.completeToolCall(tc, output, t.Display(tc.Args, output))
 }
 
 func (s *Session) completeToolCall(tc toolCall, output string, disp tool.ToolDisplay) {
@@ -534,7 +585,9 @@ func (s *Session) completeToolCall(tc toolCall, output string, disp tool.ToolDis
 		ToolCallID: tc.ID,
 		Timestamp:  time.Now(),
 	}
+	s.historyMu.Lock()
 	s.history = append(s.history, toolMsg)
+	s.historyMu.Unlock()
 	s.store.persistMessage(
 		s.id,
 		string(message.RoleTool),

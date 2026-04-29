@@ -132,6 +132,10 @@ func (EditTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 		return "", fmt.Errorf("write %s: %w", fp, err)
 	}
 
+	if stat, err := os.Stat(fp); err == nil {
+		tracker.Store(fp, stat.ModTime().Unix())
+	}
+
 	diff := unifiedDiff(fp, contentOld, contentNew)
 	added, removed := countDiffLines(contentOld, contentNew)
 

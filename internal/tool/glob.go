@@ -198,7 +198,8 @@ func (GlobTool) Display(args, output string) ToolDisplay {
 	return disp
 }
 
-func (GlobTool) Core() bool { return false }
+func (GlobTool) Core() bool                { return false }
+func (GlobTool) ConcurrencySafe() bool     { return true }
 func (GlobTool) PromptSnippet() string {
 	return "glob — Find files by glob pattern (e.g. **/*.go). Sorted by modification time."
 }
