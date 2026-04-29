@@ -29,7 +29,8 @@ type LLMConfig struct {
 }
 
 type LLMProviderConfig struct {
-	APIKey string `json:"api_key"`
+	APIKey  string `json:"api_key"`
+	BaseURL string `json:"base_url,omitempty"`
 }
 
 func (c *SessionConfig) IdleTimeoutDuration() time.Duration {

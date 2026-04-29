@@ -108,7 +108,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	provider, err := llm.NewProvider(providerName, providerCfg.APIKey, modelName)
+	provider, err := llm.NewProvider(providerName, providerCfg.APIKey, modelName, providerCfg.BaseURL)
 	if err != nil {
 		log.Error("failed to create provider", "provider", providerName, "error", err)
 		os.Exit(1)
