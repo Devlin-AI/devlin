@@ -259,6 +259,21 @@ func (s *Session) sendEvent(evt Event) {
 	}
 }
 
+func (s *Session) sendToolStart(tc toolCall) {
+	t, ok := tool.Get(tc.Name)
+	if !ok {
+		return
+	}
+	disp := t.Display(tc.Args, "")
+	disp.Body = nil
+	s.sendEvent(Event{
+		Type:     "tool_start",
+		ToolName: tc.Name,
+		ToolID:   tc.ID,
+		Display:  string(marshalToolCallDisplay(disp)),
+	})
+}
+
 const maxProviderRetries = 8
 
 func isRetryableStatus(code int) bool {
@@ -342,14 +357,9 @@ func (s *Session) processLoop() {
 					s.sendEvent(Event{Type: "thinking", Content: evt.Token})
 			case message.StreamEventToolStart:
 				if evt.ToolID != "" {
-					display := string(marshalToolCallDisplay(tool.ToolDisplay{}))
-					s.sendEvent(Event{
-						Type:     "tool_start",
-						Content:  evt.Token,
-						ToolName: evt.ToolName,
-						ToolID:   evt.ToolID,
-						Display:  display,
-					})
+					if len(toolCalls) > 0 {
+						s.sendToolStart(toolCalls[len(toolCalls)-1])
+					}
 					toolCalls = append(toolCalls, toolCall{
 						ID:   evt.ToolID,
 						Name: evt.ToolName,
@@ -437,6 +447,10 @@ func (s *Session) processLoop() {
 			return
 		}
 
+		if len(toolCalls) > 0 {
+			s.sendToolStart(toolCalls[len(toolCalls)-1])
+		}
+
 		groups := s.partitionToolCalls(toolCalls)
 		for _, g := range groups {
 			if ctx.Err() != nil {
@@ -514,14 +528,6 @@ func (s *Session) executeTool(ctx context.Context, tc toolCall) {
 		s.completeToolCall(tc, output, tool.ToolDisplay{Body: []tool.DisplayBlock{{Type: tool.DisplayText, Content: output}}})
 		return
 	}
-
-	initialDisp := t.Display(tc.Args, "")
-	initialDisp.Body = nil
-	s.sendEvent(Event{
-		Type:    "tool_output",
-		ToolID:  tc.ID,
-		Display: string(marshalToolCallDisplay(initialDisp)),
-	})
 
 	if se, ok := t.(tool.StreamingExecutor); ok {
 		pending := ""
