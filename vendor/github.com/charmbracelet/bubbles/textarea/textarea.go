@@ -855,13 +855,16 @@ func (m Model) LineInfo() LineInfo {
 // repositionView repositions the view of the viewport based on the defined
 // scrolling behavior.
 func (m *Model) repositionView() {
-	minimum := m.viewport.YOffset
-	maximum := minimum + m.viewport.Height - 1
+	row := m.cursorLineNumber()
 
-	if row := m.cursorLineNumber(); row < minimum {
-		m.viewport.ScrollUp(minimum - row)
-	} else if row > maximum {
-		m.viewport.ScrollDown(row - maximum)
+	maxVisible := m.viewport.YOffset + m.viewport.Height - 1
+	if row > maxVisible {
+		m.viewport.SetYOffset(row - m.viewport.Height + 1)
+	}
+
+	minOffset := max(0, row-m.viewport.Height+1)
+	if m.viewport.YOffset > minOffset {
+		m.viewport.SetYOffset(minOffset)
 	}
 }
 
@@ -952,6 +955,7 @@ func (m *Model) SetHeight(h int) {
 		m.height = max(h, minHeight)
 		m.viewport.Height = max(h, minHeight)
 	}
+	m.repositionView()
 }
 
 // Update is the Bubble Tea update loop.
