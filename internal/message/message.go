@@ -46,7 +46,7 @@ type FunctionDef struct {
 }
 
 type Message struct {
-	ID         string     `json:"id"`
+	ID         int64      `json:"id"`
 	SessionID  string     `json:"session_id"`
 	Role       Role       `json:"role"`
 	Content    string     `json:"content"`

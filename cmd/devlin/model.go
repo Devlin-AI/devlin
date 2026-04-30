@@ -18,6 +18,7 @@ import (
 
 type message struct {
 	role       string
+	msgID      int64
 	toolID     string
 	text       string
 	thinking   string

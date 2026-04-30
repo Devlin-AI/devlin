@@ -431,7 +431,7 @@ func (s *Session) processLoop() {
 		}
 
 		s.history = append(s.history, assistantMsg)
-		s.store.persistMessage(
+		assistantMsgID := s.store.persistMessage(
 			s.id,
 			string(message.RoleAssistant),
 			assistantText,
@@ -443,7 +443,7 @@ func (s *Session) processLoop() {
 		)
 
 		if len(toolCalls) == 0 {
-			s.sendEvent(Event{Type: "done"})
+			s.sendEvent(Event{Type: "done", MessageID: assistantMsgID})
 			return
 		}
 

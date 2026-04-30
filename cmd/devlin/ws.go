@@ -17,7 +17,9 @@ import (
 type wsConnectedMsg struct{ conn *websocket.Conn }
 type wsThinkingMsg struct{ text string }
 type wsTokenMsg struct{ text string }
-type wsDoneMsg struct{}
+type wsDoneMsg struct {
+	messageID int64
+}
 
 type wsToolStartMsg struct {
 	toolID   string
@@ -189,7 +191,7 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 		case "thinking":
 			return wsThinkingMsg{text: evt.Content}
 		case "done":
-			return wsDoneMsg{}
+			return wsDoneMsg{messageID: evt.MessageID}
 		case "cancelled":
 			return wsCancelledMsg{}
 		case "tool_start":

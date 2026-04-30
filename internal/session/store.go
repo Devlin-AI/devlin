@@ -106,16 +106,20 @@ func (s *Store) CreateSession(id, channel, mode string) error {
 	return nil
 }
 
-func (s *Store) InsertMessage(sessionID string, role string, content string, toolCalls []byte, toolCallID string, toolName string, thinking string, model string, usage []byte, ts float64) error {
-	_, err := s.db.Exec(
+func (s *Store) InsertMessage(sessionID string, role string, content string, toolCalls []byte, toolCallID string, toolName string, thinking string, model string, usage []byte, ts float64) (int64, error) {
+	result, err := s.db.Exec(
 		`INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, tool_name, thinking, model, usage, timestamp)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, role, content, toolCalls, toolCallID, toolName, thinking, model, usage, ts,
 	)
 	if err != nil {
-		return fmt.Errorf("insert message: %w", err)
+		return 0, fmt.Errorf("insert message: %w", err)
 	}
-	return nil
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("last insert id: %w", err)
+	}
+	return id, nil
 }
 
 func (s *Store) TouchSession(id string) error {
@@ -127,14 +131,16 @@ func (s *Store) TouchSession(id string) error {
 	return nil
 }
 
-func (s *Store) persistMessage(sessionID string, role string, content string, toolCallsJSON []byte, toolCallID string, toolName string, thinking string, model string, usageJSON []byte) {
+func (s *Store) persistMessage(sessionID string, role string, content string, toolCallsJSON []byte, toolCallID string, toolName string, thinking string, model string, usageJSON []byte) int64 {
 	ts := float64(time.Now().UnixNano()) / 1e9
-	if err := s.InsertMessage(sessionID, role, content, toolCallsJSON, toolCallID, toolName, thinking, model, usageJSON, ts); err != nil {
+	id, err := s.InsertMessage(sessionID, role, content, toolCallsJSON, toolCallID, toolName, thinking, model, usageJSON, ts)
+	if err != nil {
 		logger.L().Error("failed to persist message", "session_id", sessionID, "role", role, "error", err)
 	}
 	if err := s.TouchSession(sessionID); err != nil {
 		logger.L().Error("failed to touch session", "session_id", sessionID, "error", err)
 	}
+	return id
 }
 
 func marshalToolCalls(v interface{}) []byte {
