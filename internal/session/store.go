@@ -203,7 +203,7 @@ func (s *Store) LoadBranchMeta(sessionID string) (*BranchMeta, error) {
 
 func (s *Store) LoadMessagesForSession(sessionID string) ([]message.Message, error) {
 	rows, err := s.db.Query(
-		"SELECT id, session_id, role, content, tool_calls, tool_call_id FROM messages WHERE session_id = ? ORDER BY id",
+		"SELECT id, session_id, role, content, tool_calls, tool_call_id FROM messages WHERE session_id = ? AND role NOT IN ('system', 'tool_defs') ORDER BY id",
 		sessionID,
 	)
 	if err != nil {
@@ -228,7 +228,7 @@ func (s *Store) LoadMessagesForSession(sessionID string) ([]message.Message, err
 
 func (s *Store) LoadMessagesUpToID(sessionID string, upToMsgID int64) ([]message.Message, error) {
 	rows, err := s.db.Query(
-		"SELECT id, session_id, role, content, tool_calls, tool_call_id FROM messages WHERE session_id = ? AND id <= ? ORDER BY id",
+		"SELECT id, session_id, role, content, tool_calls, tool_call_id FROM messages WHERE session_id = ? AND id <= ? AND role NOT IN ('system', 'tool_defs') ORDER BY id",
 		sessionID, upToMsgID,
 	)
 	if err != nil {
