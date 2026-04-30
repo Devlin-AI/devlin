@@ -257,40 +257,58 @@ func (s *Store) LoadMessagesUpToID(sessionID string, upToMsgID int64) ([]message
 	return msgs, rows.Err()
 }
 
-func (s *Store) LoadFullHistory(sessionID string) ([]message.Message, error) {
-	var allMsgs []message.Message
-
+func (s *Store) walkBranchUp(sessionID string, fn func(*BranchMeta) error) error {
 	currentID := sessionID
 	for currentID != "" {
 		meta, err := s.LoadBranchMeta(currentID)
 		if err != nil {
-			return nil, err
+			return fmt.Errorf("load branch meta for %s: %w", currentID, err)
 		}
-
-		var msgs []message.Message
-		if meta != nil && meta.ParentID != "" {
-			msgs, err = s.LoadMessagesUpToID(currentID, 0)
-			if err != nil {
-				return nil, err
-			}
-			currentID = meta.ParentID
-
-			parentMsgs, err := s.LoadMessagesUpToID(meta.ParentID, meta.ParentMsgID)
-			if err != nil {
-				return nil, err
-			}
-			allMsgs = append(parentMsgs, msgs...)
-		} else {
-			msgs, err = s.LoadMessagesForSession(currentID)
-			if err != nil {
-				return nil, err
-			}
-			allMsgs = msgs
-			currentID = ""
+		if meta == nil {
+			break
 		}
+		if err := fn(meta); err != nil {
+			return err
+		}
+		currentID = meta.ParentID
 	}
+	return nil
+}
 
+func (s *Store) LoadFullHistory(sessionID string) ([]message.Message, error) {
+	msgs, err := s.LoadMessagesForSession(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("load messages for %s: %w", sessionID, err)
+	}
+	allMsgs := msgs
+
+	err = s.walkBranchUp(sessionID, func(meta *BranchMeta) error {
+		parentMsgs, err := s.LoadMessagesUpToID(meta.ParentID, meta.ParentMsgID)
+		if err != nil {
+			return fmt.Errorf("load messages up to id for %s: %w", meta.ParentID, err)
+		}
+		allMsgs = append(parentMsgs, allMsgs...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 	return allMsgs, nil
+}
+
+func (s *Store) LoadBranchChain(sessionID string) ([]BranchMeta, error) {
+	var chain []BranchMeta
+	err := s.walkBranchUp(sessionID, func(meta *BranchMeta) error {
+		chain = append(chain, *meta)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+	return chain, nil
 }
 
 func (s *Store) ListBranches(sessionID string) ([]BranchMeta, error) {
