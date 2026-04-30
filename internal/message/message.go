@@ -53,6 +53,7 @@ type Message struct {
 	Timestamp  time.Time  `json:"timestamp"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ToolName   string     `json:"tool_name,omitempty"`
 }
 
 type StreamEvent struct {
