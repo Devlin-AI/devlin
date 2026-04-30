@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -82,7 +81,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.textarea.Value() != "" {
 						m.textarea.Reset()
 						m.textarea.SetHeight(1)
-						m.viewport.Height = m.windowHeight - m.textarea.Height() - dividerHeight
+						syncViewportHeight(&m)
 					}
 					m.cancelPending = true
 					m.textarea.Placeholder = "Press Esc again to cancel..."
@@ -101,7 +100,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.textarea.Value() != "" {
 					m.textarea.Reset()
 					m.textarea.SetHeight(1)
-					m.viewport.Height = m.windowHeight - m.textarea.Height() - dividerHeight
+					syncViewportHeight(&m)
 					refreshView(&m)
 				}
 			}
@@ -125,7 +124,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.messages = append(m.messages, message{role: "assistant", text: ""})
 				m.streaming = true
 
-				m.viewport.Height = m.windowHeight - m.textarea.Height() - dividerHeight
+				syncViewportHeight(&m)
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
 
@@ -140,10 +139,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 
-		if key.Matches(msg, m.textarea.KeyMap.InsertNewline) {
-			m.textarea.SetHeight(min(visualLineCount(m.textarea)+1, textareaMaxHeight))
-			m.viewport.Height = m.windowHeight - m.textarea.Height() - dividerHeight
-		}
+		m.textarea.SetHeight(min(visualLineCount(m.textarea)+1, textareaMaxHeight))
+		syncViewportHeight(&m)
 
 		var taCmd tea.Cmd
 		m.textarea, taCmd = m.textarea.Update(msg)
@@ -152,7 +149,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		desiredHeight := min(max(visualLineCount(m.textarea), 1), textareaMaxHeight)
 		if desiredHeight != m.textarea.Height() {
 			m.textarea.SetHeight(desiredHeight)
-			m.viewport.Height = m.windowHeight - m.textarea.Height() - dividerHeight
+			syncViewportHeight(&m)
 		}
 		return m, tea.Batch(cmds...)
 
@@ -297,7 +294,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.streaming = false
 		m.messages = append(m.messages, message{role: "error", text: msg.text})
-		m.viewport.Height = m.windowHeight - m.textarea.Height() - dividerHeight
+		syncViewportHeight(&m)
 		refreshView(&m)
 		return m, readNext(m.conn)
 
@@ -460,18 +457,11 @@ func (m model) findToolMsg(toolID string) int {
 }
 
 func visualLineCount(ta textarea.Model) int {
-	width := ta.Width() - lipgloss.Width(ta.Prompt)
-	if width <= 0 {
-		return ta.LineCount()
-	}
+	return ta.WrappedLineCount()
+}
 
-	total := 0
-	for _, line := range strings.Split(ta.Value(), "\n") {
-		wrapped := ansi.Wrap(line, width, " ")
-		total += strings.Count(wrapped, "\n") + 1
-	}
-
-	return total
+func syncViewportHeight(m *model) {
+	m.viewport.Height = m.windowHeight - m.textarea.Height() - dividerHeight
 }
 
 func refreshView(m *model) {

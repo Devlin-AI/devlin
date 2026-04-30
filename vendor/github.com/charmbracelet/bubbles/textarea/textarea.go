@@ -477,6 +477,14 @@ func (m *Model) LineCount() int {
 	return len(m.value)
 }
 
+func (m Model) WrappedLineCount() int {
+	total := 0
+	for _, line := range m.value {
+		total += len(m.memoizedWrap(line, m.width))
+	}
+	return total
+}
+
 // Line returns the line position.
 func (m Model) Line() int {
 	return m.row
@@ -855,16 +863,18 @@ func (m Model) LineInfo() LineInfo {
 // repositionView repositions the view of the viewport based on the defined
 // scrolling behavior.
 func (m *Model) repositionView() {
-	row := m.cursorLineNumber()
+	minimum := m.viewport.YOffset
+	maximum := minimum + m.viewport.Height - 1
 
-	maxVisible := m.viewport.YOffset + m.viewport.Height - 1
-	if row > maxVisible {
-		m.viewport.SetYOffset(row - m.viewport.Height + 1)
+	if row := m.cursorLineNumber(); row < minimum {
+		m.viewport.ScrollUp(minimum - row)
+	} else if row > maximum {
+		m.viewport.ScrollDown(row - maximum)
 	}
 
-	minOffset := max(0, row-m.viewport.Height+1)
-	if m.viewport.YOffset > minOffset {
-		m.viewport.SetYOffset(minOffset)
+	maxOffset := max(0, m.WrappedLineCount()-m.viewport.Height)
+	if m.viewport.YOffset > maxOffset {
+		m.viewport.SetYOffset(maxOffset)
 	}
 }
 
@@ -955,7 +965,6 @@ func (m *Model) SetHeight(h int) {
 		m.height = max(h, minHeight)
 		m.viewport.Height = max(h, minHeight)
 	}
-	m.repositionView()
 }
 
 // Update is the Bubble Tea update loop.
@@ -1416,7 +1425,7 @@ func wrap(runes []rune, width int) [][]rune {
 		}
 
 		if spaces > 0 { //nolint:nestif
-			if uniseg.StringWidth(string(lines[row]))+uniseg.StringWidth(string(word))+spaces > width {
+	if uniseg.StringWidth(string(lines[row]))+uniseg.StringWidth(string(word))+spaces >= width {
 				row++
 				lines = append(lines, []rune{})
 				lines[row] = append(lines[row], word...)
@@ -1446,7 +1455,7 @@ func wrap(runes []rune, width int) [][]rune {
 		}
 	}
 
-	if uniseg.StringWidth(string(lines[row]))+uniseg.StringWidth(string(word))+spaces >= width {
+	if uniseg.StringWidth(string(lines[row]))+uniseg.StringWidth(string(word))+spaces > width {
 		lines = append(lines, []rune{})
 		lines[row+1] = append(lines[row+1], word...)
 		// We add an extra space at the end of the line to account for the
