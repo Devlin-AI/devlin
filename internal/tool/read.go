@@ -138,7 +138,7 @@ func (ReadTool) Display(args, output string) ToolDisplay {
 
 	var out readOutput
 	if err := json.Unmarshal([]byte(output), &out); err != nil {
-		return ToolDisplay{Title: rp.FilePath}
+		return ToolDisplay{Title: rp.FilePath, Body: []DisplayBlock{{Type: DisplayText, Content: output}}}
 	}
 
 	return ToolDisplay{Title: out.Title}

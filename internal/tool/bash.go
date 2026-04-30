@@ -267,6 +267,10 @@ func (BashTool) Display(args, output string) ToolDisplay {
 		}
 	}
 
+	if out.TimedOut {
+		disp.Body = append(disp.Body, DisplayBlock{Type: DisplayText, Content: "(timed out)"})
+	}
+
 	return disp
 }
 
