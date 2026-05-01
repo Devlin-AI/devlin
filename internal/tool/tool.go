@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 )
 
+type contextKey struct{}
+
 type DisplayType string
 
 const (
@@ -43,4 +45,21 @@ type StreamingExecutor interface {
 
 type ConcurrencySafe interface {
 	ConcurrencySafe() bool
+}
+
+type SessionSpawner interface {
+	SpawnSubagent(ctx context.Context, description, prompt string) (string, error)
+	MaxDepth() int
+	Depth() int
+}
+
+func ContextWithSpawner(ctx context.Context, spawner SessionSpawner) context.Context {
+	return context.WithValue(ctx, contextKey{}, spawner)
+}
+
+func SpawnerFromContext(ctx context.Context) SessionSpawner {
+	if spawner, ok := ctx.Value(contextKey{}).(SessionSpawner); ok {
+		return spawner
+	}
+	return nil
 }
