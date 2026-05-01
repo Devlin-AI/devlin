@@ -199,6 +199,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, tea.Batch(cmds...)
 
+	case sentMsg:
+		return m, nil
+
 	case wsConnectedMsg:
 		m.conn = msg.conn
 		if m.reconnecting {

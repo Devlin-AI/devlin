@@ -15,6 +15,7 @@ import (
 )
 
 type wsConnectedMsg struct{ conn *websocket.Conn }
+type sentMsg struct{}
 type wsThinkingMsg struct{ text string }
 type wsTokenMsg struct{ text string }
 type wsDoneMsg struct {
@@ -80,7 +81,7 @@ func sendNew(conn *websocket.Conn) tea.Cmd {
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
-		return nil
+		return sentMsg{}
 	}
 }
 
@@ -90,7 +91,7 @@ func sendBranch(conn *websocket.Conn, messageID int64) tea.Cmd {
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
-		return nil
+		return sentMsg{}
 	}
 }
 
@@ -100,7 +101,7 @@ func sendSwitchSession(conn *websocket.Conn, sessionID string) tea.Cmd {
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
-		return nil
+		return sentMsg{}
 	}
 }
 
@@ -110,7 +111,7 @@ func sendListBranches(conn *websocket.Conn) tea.Cmd {
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
-		return nil
+		return sentMsg{}
 	}
 }
 
@@ -120,7 +121,7 @@ func sendListSessions(conn *websocket.Conn) tea.Cmd {
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
-		return nil
+		return sentMsg{}
 	}
 }
 
@@ -130,7 +131,7 @@ func sendCancel(conn *websocket.Conn) tea.Cmd {
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
-		return nil
+		return sentMsg{}
 	}
 }
 
