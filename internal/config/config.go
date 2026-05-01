@@ -9,6 +9,46 @@ import (
 	"github.com/devlin-ai/devlin/internal/logger"
 )
 
+func stripComments(data []byte) []byte {
+	var out []byte
+	i := 0
+	for i < len(data) {
+		if data[i] == '"' {
+			end := i + 1
+			for end < len(data) {
+				if data[end] == '\\' {
+					end++
+				} else if data[end] == '"' {
+					break
+				}
+				end++
+			}
+			out = append(out, data[i:end+1]...)
+			i = end + 1
+			continue
+		}
+		if data[i] == '/' && i+1 < len(data) {
+			if data[i+1] == '/' {
+				for i < len(data) && data[i] != '\n' {
+					i++
+				}
+				continue
+			}
+			if data[i+1] == '*' {
+				i += 2
+				for i+1 < len(data) && !(data[i] == '*' && data[i+1] == '/') {
+					i++
+				}
+				i += 2
+				continue
+			}
+		}
+		out = append(out, data[i])
+		i++
+	}
+	return out
+}
+
 type Config struct {
 	Gateway GatewayConfig `json:"gateway"`
 	LLM     LLMConfig     `json:"llm"`
@@ -57,6 +97,8 @@ func Load() (*Config, error) {
 		log.Error("failed to read config file", "path", path, "error", err)
 		return nil, err
 	}
+
+	data = stripComments(data)
 
 	var config Config
 	if err := json.Unmarshal(data, &config); err != nil {

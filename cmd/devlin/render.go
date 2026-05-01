@@ -6,7 +6,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/glamour/styles"
+	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/devlin-ai/devlin/internal/tool"
 )
 
@@ -138,16 +139,29 @@ func renderLines(lines []string, maxLines int, bodyW int, prefixW int) string {
 	}
 
 	indent := strings.Repeat(" ", prefixW)
-	result := strings.Join(lines, "\n")
-	wrapped := ansi.Wrap(result, bodyW, " ")
-	return strings.Join(strings.Split(wrapped, "\n"), "\n"+indent)
+	wrapped := make([]string, len(lines))
+	for i, l := range lines {
+		wrapped[i] = xansi.Wrap(l, bodyW, " ")
+	}
+	return strings.Join(wrapped, "\n"+indent)
 }
 
 func newMDRenderer(width int) *glamour.TermRenderer {
+	cfg := styles.DarkStyleConfig
+	if mdStyle == "light" {
+		cfg = styles.LightStyleConfig
+	}
+	cfg.Document.Margin = ptrUint(0)
+	cfg.Document.BlockPrefix = ""
+	cfg.Document.BlockSuffix = ""
+	cfg.CodeBlock.Margin = ptrUint(0)
+	cfg.CodeBlock.Chroma = nil
+	cfg.Code.Prefix = " "
+	cfg.Code.Suffix = " "
+
 	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle(mdStyle),
+		glamour.WithStyles(cfg),
 		glamour.WithWordWrap(width),
-		glamour.WithStylesFromJSONBytes([]byte(mdStyleOverrides)),
 	)
 	if err != nil {
 		return nil
@@ -155,17 +169,4 @@ func newMDRenderer(width int) *glamour.TermRenderer {
 	return r
 }
 
-const mdStyleOverrides = `{
-  "document": {
-    "margin": 0,
-    "block_prefix": "",
-    "block_suffix": ""
-  },
-  "code_block": {
-    "margin": 0
-  },
-  "code": {
-    "prefix": " ",
-    "suffix": " "
-  }
-}`
+func ptrUint(v uint) *uint { return &v }
