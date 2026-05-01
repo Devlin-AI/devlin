@@ -131,16 +131,16 @@ func (s *Store) TouchSession(id string) error {
 	return nil
 }
 
-func (s *Store) persistMessage(sessionID string, role string, content string, toolCallsJSON []byte, toolCallID string, toolName string, thinking string, model string, usageJSON []byte) int64 {
+func (s *Store) persistMessage(sessionID string, role string, content string, toolCallsJSON []byte, toolCallID string, toolName string, thinking string, model string, usageJSON []byte) (int64, error) {
 	ts := float64(time.Now().UnixNano()) / 1e9
 	id, err := s.InsertMessage(sessionID, role, content, toolCallsJSON, toolCallID, toolName, thinking, model, usageJSON, ts)
 	if err != nil {
-		logger.L().Error("failed to persist message", "session_id", sessionID, "role", role, "error", err)
+		return 0, fmt.Errorf("persist message: %w", err)
 	}
 	if err := s.TouchSession(sessionID); err != nil {
 		logger.L().Error("failed to touch session", "session_id", sessionID, "error", err)
 	}
-	return id
+	return id, nil
 }
 
 func marshalToolCalls(v interface{}) []byte {

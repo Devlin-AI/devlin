@@ -56,7 +56,9 @@ func New(provider llm.Provider, store *Store, ch string, mode string, model stri
 		onEvent:      onEvent,
 	}
 
-	s.store.persistMessage(id, "tool_defs", string(marshalToolCalls(buildToolDefs())), nil, "", "", "", "", nil)
+	if _, err := s.store.persistMessage(id, "tool_defs", string(marshalToolCalls(buildToolDefs())), nil, "", "", "", "", nil); err != nil {
+		logger.L().Error("failed to persist tool_defs", "session_id", id, "error", err)
+	}
 
 	return s, nil
 }
@@ -248,7 +250,9 @@ func (s *Session) ProcessMessage(content string) {
 		Content:   content,
 		Timestamp: time.Now(),
 	})
-	s.store.persistMessage(s.id, string(message.RoleUser), content, nil, "", "", "", "", nil)
+	if _, err := s.store.persistMessage(s.id, string(message.RoleUser), content, nil, "", "", "", "", nil); err != nil {
+		logger.L().Error("failed to persist user message", "session_id", s.id, "error", err)
+	}
 
 	s.processLoop()
 }
@@ -431,7 +435,7 @@ func (s *Session) processLoop() {
 		}
 
 		s.history = append(s.history, assistantMsg)
-		assistantMsgID := s.store.persistMessage(
+		assistantMsgID, err := s.store.persistMessage(
 			s.id,
 			string(message.RoleAssistant),
 			assistantText,
@@ -441,6 +445,9 @@ func (s *Session) processLoop() {
 			s.model,
 			nil,
 		)
+		if err != nil {
+			logger.L().Error("failed to persist assistant message", "session_id", s.id, "error", err)
+		}
 
 		if len(toolCalls) == 0 {
 			s.sendEvent(Event{Type: "done", MessageID: assistantMsgID})
@@ -594,7 +601,7 @@ func (s *Session) completeToolCall(tc toolCall, output string, disp tool.ToolDis
 	s.historyMu.Lock()
 	s.history = append(s.history, toolMsg)
 	s.historyMu.Unlock()
-	s.store.persistMessage(
+	if _, err := s.store.persistMessage(
 		s.id,
 		string(message.RoleTool),
 		output,
@@ -602,7 +609,9 @@ func (s *Session) completeToolCall(tc toolCall, output string, disp tool.ToolDis
 		tc.ID,
 		tc.Name,
 		"", "", nil,
-	)
+	); err != nil {
+		logger.L().Error("failed to persist tool message", "session_id", s.id, "tool", tc.Name, "error", err)
+	}
 }
 
 type toolCall struct {

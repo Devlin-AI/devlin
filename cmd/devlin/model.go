@@ -416,6 +416,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.messages = nil
 		m.parent = nil
 		m.childBranches = nil
+		m.siblings = nil
+		m.siblingIdx = 0
 		refreshView(&m)
 		if m.conn != nil {
 			return m, tea.Batch(readNext(m.conn), sendSessionState(m.conn, m.sessionID))

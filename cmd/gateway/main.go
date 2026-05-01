@@ -263,15 +263,24 @@ func main() {
 				var parent *channel.BranchInfo
 				var siblings []channel.BranchInfo
 				var siblingIdx int
-				currentMeta, _ := store.LoadBranchMeta(targetID)
+				currentMeta, err := store.LoadBranchMeta(targetID)
+				if err != nil {
+					log.Error("load branch meta failed", "session_id", targetID, "error", err)
+				}
 				if currentMeta != nil && currentMeta.ParentID != "" {
 					parent = &channel.BranchInfo{
 						SessionID:   currentMeta.ParentID,
 						ParentMsgID: currentMeta.ParentMsgID,
 					}
-					parentChildren, _ := store.ListBranches(currentMeta.ParentID)
+					parentChildren, err := store.ListBranches(currentMeta.ParentID)
+					if err != nil {
+						log.Error("list parent branches failed", "parent_id", currentMeta.ParentID, "error", err)
+					}
 					for i, pc := range parentChildren {
-						firstMsg, _ := store.GetFirstUserMessage(pc.SessionID)
+						firstMsg, err := store.GetFirstUserMessage(pc.SessionID)
+						if err != nil {
+							log.Error("get first user message failed", "session_id", pc.SessionID, "error", err)
+						}
 						siblings = append(siblings, channel.BranchInfo{
 							SessionID:    pc.SessionID,
 							ParentMsgID:  pc.ParentMsgID,
@@ -283,10 +292,16 @@ func main() {
 					}
 				}
 
-				childMetas, _ := store.ListBranches(targetID)
+				childMetas, err := store.ListBranches(targetID)
+				if err != nil {
+					log.Error("list child branches failed", "session_id", targetID, "error", err)
+				}
 				children := make([]channel.BranchInfo, len(childMetas))
 				for i, b := range childMetas {
-					firstMsg, _ := store.GetFirstUserMessage(b.SessionID)
+					firstMsg, err := store.GetFirstUserMessage(b.SessionID)
+					if err != nil {
+						log.Error("get first user message failed", "session_id", b.SessionID, "error", err)
+					}
 					children[i] = channel.BranchInfo{
 						SessionID:    b.SessionID,
 						ParentMsgID:  b.ParentMsgID,
