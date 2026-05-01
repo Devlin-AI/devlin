@@ -133,13 +133,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "ctrl+right":
-			if m.conn != nil && len(m.childBranches) > 0 {
-				return m, sendSwitchSession(m.conn, m.childBranches[0].SessionID)
+			if m.conn != nil && len(m.childBranches) > 0 && !m.streaming {
+				idx := len(m.childBranches) - 1
+				m.siblings = m.childBranches
+				m.siblingIdx = idx
+				return m, sendSwitchSession(m.conn, m.childBranches[idx].SessionID)
 			}
 			return m, nil
 		case "ctrl+left":
-			if m.conn != nil && m.parent != nil {
+			if m.conn != nil && m.parent != nil && !m.streaming {
+				m.siblings = nil
+				m.siblingIdx = -1
 				return m, sendSwitchSession(m.conn, m.parent.SessionID)
+			}
+			return m, nil
+		case "ctrl+up":
+			if m.conn != nil && m.siblingIdx > 0 && !m.streaming {
+				m.siblingIdx--
+				return m, sendSwitchSession(m.conn, m.siblings[m.siblingIdx].SessionID)
+			}
+			return m, nil
+		case "ctrl+down":
+			if m.conn != nil && m.siblingIdx >= 0 && m.siblingIdx < len(m.siblings)-1 && !m.streaming {
+				m.siblingIdx++
+				return m, sendSwitchSession(m.conn, m.siblings[m.siblingIdx].SessionID)
 			}
 			return m, nil
 		case "enter":
@@ -564,13 +581,10 @@ func (m model) renderMessages() string {
 		s += prefix + body
 
 		if shortID, ok := branchAfter[msg.msgID]; ok {
-			s += "\n"
-			s += renderBranchDivider(w, shortID)
+			s += "\n" + renderBranchDivider(w, shortID)
 		}
-
 		if children, ok := childAt[msg.msgID]; ok {
-			s += "\n"
-			s += renderBranchTree(children, w)
+			s += "\n" + renderBranchTree(children, w)
 		}
 
 		if i < len(m.messages)-1 {

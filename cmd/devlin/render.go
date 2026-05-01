@@ -232,5 +232,5 @@ func renderBranchTree(branches []channel.BranchInfo, w int) string {
 		}
 		s += dimStyle.Render(connector+label) + "\n"
 	}
-	return s
+	return strings.TrimRight(s, "\n")
 }
