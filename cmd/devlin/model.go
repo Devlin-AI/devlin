@@ -499,6 +499,20 @@ func (m model) renderMessages() string {
 	var s string
 	w := m.viewport.Width
 
+	childAt := make(map[int64][]channel.BranchInfo)
+	for _, b := range m.childBranches {
+		childAt[b.ParentMsgID] = append(childAt[b.ParentMsgID], b)
+	}
+
+	branchAfter := make(map[int64]string)
+	for _, bp := range m.branchPoints {
+		shortID := bp.SessionID
+		if len(shortID) > 7 {
+			shortID = shortID[:7]
+		}
+		branchAfter[bp.MsgID] = shortID
+	}
+
 	for i, msg := range m.messages {
 		if msg.role == "assistant" && msg.text == "" && msg.mdBody == "" && !(m.streaming && i == len(m.messages)-1) {
 			continue
@@ -513,6 +527,8 @@ func (m model) renderMessages() string {
 			prefix = toolStyle.Render(toolPrefix)
 		} else if msg.role == "error" {
 			prefix = errStyle.Render("Error: ")
+		} else if msg.role == "system" {
+			prefix = dimStyle.Render("System: ")
 		} else if msg.role == "status" {
 			prefix = dimStyle.Render("Status: ")
 		}
@@ -546,6 +562,16 @@ func (m model) renderMessages() string {
 		}
 
 		s += prefix + body
+
+		if shortID, ok := branchAfter[msg.msgID]; ok {
+			s += "\n"
+			s += renderBranchDivider(w, shortID)
+		}
+
+		if children, ok := childAt[msg.msgID]; ok {
+			s += "\n"
+			s += renderBranchTree(children, w)
+		}
 
 		if i < len(m.messages)-1 {
 			s += "\n"
