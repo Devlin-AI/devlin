@@ -33,9 +33,27 @@ func (z *ZaiProvider) Name() string {
 }
 
 func (z *ZaiProvider) Stream(ctx context.Context, messages []message.Message, tools []message.ToolDef) (<-chan message.StreamEvent, error) {
+	apiMessages := make([]interface{}, len(messages))
+	for i, msg := range messages {
+		m := map[string]interface{}{
+			"role":    string(msg.Role),
+			"content": msg.Content,
+		}
+		if msg.Role == message.RoleAssistant && msg.Thinking != "" {
+			m["reasoning_content"] = msg.Thinking
+		}
+		if len(msg.ToolCalls) > 0 {
+			m["tool_calls"] = msg.ToolCalls
+		}
+		if msg.ToolCallID != "" {
+			m["tool_call_id"] = msg.ToolCallID
+		}
+		apiMessages[i] = m
+	}
+
 	body := map[string]interface{}{
 		"model":    z.model,
-		"messages": messages,
+		"messages": apiMessages,
 		"stream":   true,
 	}
 

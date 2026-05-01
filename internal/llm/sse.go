@@ -58,6 +58,7 @@ func streamOpenAISSE(ctx context.Context, req *http.Request) (<-chan message.Str
 		}
 
 		scanner := bufio.NewScanner(resp.Body)
+		var streamUsage *message.Usage
 		for scanner.Scan() {
 			line := scanner.Text()
 
@@ -72,29 +73,42 @@ func streamOpenAISSE(ctx context.Context, req *http.Request) (<-chan message.Str
 
 			if data == "[DONE]" {
 				ch <- message.StreamEvent{
-					Type: message.StreamEventDone,
+					Type:  message.StreamEventDone,
+					Usage: streamUsage,
 				}
 				return
 			}
 
-			var chunk struct {
-				Choices []struct {
-					Delta struct {
-						Content          string `json:"content"`
-						ReasoningContent string `json:"reasoning_content"`
-						ToolCalls        []struct {
-							ID       string `json:"id"`
-							Function struct {
-								Name      string `json:"name"`
-								Arguments string `json:"arguments"`
-							} `json:"function"`
-						} `json:"tool_calls"`
-					} `json:"delta"`
-				} `json:"choices"`
-			}
+		var chunk struct {
+			Usage *struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+				TotalTokens      int `json:"total_tokens"`
+			} `json:"usage"`
+			Choices []struct {
+				Delta struct {
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
+					ToolCalls        []struct {
+						ID       string `json:"id"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 				log.Warn("failed to unmarshal SSE chunk", "data", data, "error", err)
 				continue
+			}
+			if chunk.Usage != nil {
+				streamUsage = &message.Usage{
+					PromptTokens:     chunk.Usage.PromptTokens,
+					CompletionTokens: chunk.Usage.CompletionTokens,
+					TotalTokens:      chunk.Usage.TotalTokens,
+				}
 			}
 			if len(chunk.Choices) == 0 {
 				continue

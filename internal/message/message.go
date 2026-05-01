@@ -54,6 +54,13 @@ type Message struct {
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	ToolName   string     `json:"tool_name,omitempty"`
+	Thinking   string     `json:"thinking,omitempty"`
+}
+
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 type StreamEvent struct {
@@ -64,4 +71,5 @@ type StreamEvent struct {
 	ToolName   string          `json:"tool_name,omitempty"`
 	ToolID     string          `json:"tool_id,omitempty"`
 	StatusCode int             `json:"status_code,omitempty"`
+	Usage      *Usage          `json:"usage,omitempty"`
 }

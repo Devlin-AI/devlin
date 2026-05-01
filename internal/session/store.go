@@ -209,7 +209,7 @@ func (s *Store) LoadBranchMeta(sessionID string) (*BranchMeta, error) {
 
 func (s *Store) LoadMessagesForSession(sessionID string) ([]message.Message, error) {
 	rows, err := s.db.Query(
-		"SELECT id, session_id, role, content, tool_calls, tool_call_id, tool_name FROM messages WHERE session_id = ? AND role NOT IN ('system', 'tool_defs') ORDER BY id",
+		"SELECT id, session_id, role, content, tool_calls, tool_call_id, tool_name, thinking FROM messages WHERE session_id = ? AND role NOT IN ('system', 'tool_defs', 'system_prompt') ORDER BY id",
 		sessionID,
 	)
 	if err != nil {
@@ -221,7 +221,7 @@ func (s *Store) LoadMessagesForSession(sessionID string) ([]message.Message, err
 	for rows.Next() {
 		var msg message.Message
 		var toolCallsJSON []byte
-		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &toolCallsJSON, &msg.ToolCallID, &msg.ToolName); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &toolCallsJSON, &msg.ToolCallID, &msg.ToolName, &msg.Thinking); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
 		if toolCallsJSON != nil {
@@ -234,7 +234,7 @@ func (s *Store) LoadMessagesForSession(sessionID string) ([]message.Message, err
 
 func (s *Store) LoadMessagesUpToID(sessionID string, upToMsgID int64) ([]message.Message, error) {
 	rows, err := s.db.Query(
-		"SELECT id, session_id, role, content, tool_calls, tool_call_id, tool_name FROM messages WHERE session_id = ? AND id <= ? AND role NOT IN ('system', 'tool_defs') ORDER BY id",
+		"SELECT id, session_id, role, content, tool_calls, tool_call_id, tool_name, thinking FROM messages WHERE session_id = ? AND id <= ? AND role NOT IN ('system', 'tool_defs', 'system_prompt') ORDER BY id",
 		sessionID, upToMsgID,
 	)
 	if err != nil {
@@ -246,7 +246,7 @@ func (s *Store) LoadMessagesUpToID(sessionID string, upToMsgID int64) ([]message
 	for rows.Next() {
 		var msg message.Message
 		var toolCallsJSON []byte
-		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &toolCallsJSON, &msg.ToolCallID, &msg.ToolName); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &toolCallsJSON, &msg.ToolCallID, &msg.ToolName, &msg.Thinking); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
 		if toolCallsJSON != nil {
@@ -366,6 +366,15 @@ func (s *Store) GetLastSession(channel, mode string) (string, error) {
 
 func (s *Store) GetParentBranch(sessionID string) (*BranchMeta, error) {
 	return s.LoadBranchMeta(sessionID)
+}
+
+func (s *Store) ComputeDepth(sessionID string) (int, error) {
+	depth := 0
+	err := s.walkBranchUp(sessionID, func(meta *BranchMeta) error {
+		depth++
+		return nil
+	})
+	return depth, err
 }
 
 func (s *Store) GetFirstUserMessage(sessionID string) (string, error) {
