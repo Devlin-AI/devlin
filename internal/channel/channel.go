@@ -10,21 +10,23 @@ type InboundMessage struct {
 }
 
 type OutboundMessage struct {
-	Type         string           `json:"type"`
-	Content      string           `json:"content"`
-	ToolName     string           `json:"tool_name,omitempty"`
-	ToolID       string           `json:"tool_id,omitempty"`
-	Display      string           `json:"display,omitempty"`
-	SessionID    string           `json:"session_id,omitempty"`
-	MessageID    int64            `json:"message_id,omitempty"`
-	Mode         string           `json:"mode,omitempty"`
-	Parent       *BranchInfo      `json:"parent,omitempty"`
-	Branches     []BranchInfo     `json:"branches,omitempty"`
-	Sessions     []SessionInfo    `json:"sessions,omitempty"`
-	Messages     []HistoryMessage `json:"messages,omitempty"`
-	BranchPoints []BranchPoint    `json:"branch_points,omitempty"`
-	Siblings     []BranchInfo     `json:"siblings,omitempty"`
-	SiblingIdx   int              `json:"sibling_idx,omitempty"`
+	Type           string           `json:"type"`
+	Content        string           `json:"content"`
+	ToolName       string           `json:"tool_name,omitempty"`
+	ToolID         string           `json:"tool_id,omitempty"`
+	Display        string           `json:"display,omitempty"`
+	SessionID      string           `json:"session_id,omitempty"`
+	MessageID      int64            `json:"message_id,omitempty"`
+	Mode           string           `json:"mode,omitempty"`
+	Parent         *BranchInfo      `json:"parent,omitempty"`
+	Branches       []BranchInfo     `json:"branches,omitempty"`
+	Sessions       []SessionInfo    `json:"sessions,omitempty"`
+	Messages       []HistoryMessage `json:"messages,omitempty"`
+	BranchPoints   []BranchPoint    `json:"branch_points,omitempty"`
+	Siblings       []BranchInfo     `json:"siblings,omitempty"`
+	SiblingIdx     int              `json:"sibling_idx,omitempty"`
+	SubagentDepth  int              `json:"subagent_depth,omitempty"`
+	SubagentDesc   string           `json:"subagent_desc,omitempty"`
 }
 
 type BranchInfo struct {

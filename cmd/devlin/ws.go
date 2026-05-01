@@ -16,26 +16,40 @@ import (
 
 type wsConnectedMsg struct{ conn *websocket.Conn }
 type sentMsg struct{}
-type wsThinkingMsg struct{ text string }
-type wsTokenMsg struct{ text string }
+type wsTokenMsg struct {
+	text          string
+	subagentDepth int
+	subagentDesc  string
+}
+type wsThinkingMsg struct {
+	text          string
+	subagentDepth int
+	subagentDesc  string
+}
 type wsDoneMsg struct {
 	messageID int64
 }
 
 type wsToolStartMsg struct {
-	toolID   string
-	toolName string
-	display  tool.ToolDisplay
+	toolID        string
+	toolName      string
+	display       tool.ToolDisplay
+	subagentDepth int
+	subagentDesc  string
 }
 type wsToolOutputMsg struct {
-	toolID  string
-	content string
-	display tool.ToolDisplay
+	toolID        string
+	content       string
+	display       tool.ToolDisplay
+	subagentDepth int
+	subagentDesc  string
 }
 type wsToolEndMsg struct {
-	toolID   string
-	toolName string
-	display  tool.ToolDisplay
+	toolID        string
+	toolName      string
+	display       tool.ToolDisplay
+	subagentDepth int
+	subagentDesc  string
 }
 
 type wsCancelledMsg struct{}
@@ -192,9 +206,9 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 
 		switch evt.Type {
 		case "token":
-			return wsTokenMsg{text: evt.Content}
+			return wsTokenMsg{text: evt.Content, subagentDepth: evt.SubagentDepth, subagentDesc: evt.SubagentDesc}
 		case "thinking":
-			return wsThinkingMsg{text: evt.Content}
+			return wsThinkingMsg{text: evt.Content, subagentDepth: evt.SubagentDepth, subagentDesc: evt.SubagentDesc}
 		case "done":
 			return wsDoneMsg{messageID: evt.MessageID}
 		case "cancelled":
@@ -204,19 +218,19 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 			if evt.Display != "" {
 				json.Unmarshal([]byte(evt.Display), &disp)
 			}
-			return wsToolStartMsg{toolID: evt.ToolID, toolName: evt.ToolName, display: disp}
+			return wsToolStartMsg{toolID: evt.ToolID, toolName: evt.ToolName, display: disp, subagentDepth: evt.SubagentDepth, subagentDesc: evt.SubagentDesc}
 		case "tool_output":
 			var disp tool.ToolDisplay
 			if evt.Display != "" {
 				json.Unmarshal([]byte(evt.Display), &disp)
 			}
-			return wsToolOutputMsg{toolID: evt.ToolID, content: evt.Content, display: disp}
+			return wsToolOutputMsg{toolID: evt.ToolID, content: evt.Content, display: disp, subagentDepth: evt.SubagentDepth, subagentDesc: evt.SubagentDesc}
 		case "tool_end":
 			var disp tool.ToolDisplay
 			if evt.Display != "" {
 				json.Unmarshal([]byte(evt.Display), &disp)
 			}
-			return wsToolEndMsg{toolID: evt.ToolID, toolName: evt.ToolName, display: disp}
+			return wsToolEndMsg{toolID: evt.ToolID, toolName: evt.ToolName, display: disp, subagentDepth: evt.SubagentDepth, subagentDesc: evt.SubagentDesc}
 		case "error":
 			return wsErrorMsg{text: evt.Content}
 		case "status":

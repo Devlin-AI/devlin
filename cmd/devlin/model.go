@@ -19,15 +19,17 @@ import (
 )
 
 type message struct {
-	role       string
-	msgID      int64
-	toolID     string
-	text       string
-	thinking   string
-	toolName   string
-	display    tool.ToolDisplay
-	rawContent string
-	mdBody     string
+	role          string
+	msgID         int64
+	toolID        string
+	text          string
+	thinking      string
+	toolName      string
+	display       tool.ToolDisplay
+	rawContent    string
+	mdBody        string
+	subagentDepth int
+	subagentDesc  string
 }
 
 type model struct {
@@ -285,7 +287,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "assistant" {
 			m.messages[len(m.messages)-1].thinking += msg.text
 		} else if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "tool" {
-			m.messages = append(m.messages, message{role: "assistant", thinking: msg.text})
+			m.messages = append(m.messages, message{role: "assistant", thinking: msg.text, subagentDepth: msg.subagentDepth, subagentDesc: msg.subagentDesc})
 		}
 		refreshView(&m)
 		return m, readNext(m.conn)
@@ -294,17 +296,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "assistant" {
 			m.messages[len(m.messages)-1].text += msg.text
 		} else if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "tool" {
-			m.messages = append(m.messages, message{role: "assistant", text: msg.text})
+			m.messages = append(m.messages, message{role: "assistant", text: msg.text, subagentDepth: msg.subagentDepth, subagentDesc: msg.subagentDesc})
 		}
 		refreshView(&m)
 		return m, readNext(m.conn)
 
 	case wsToolStartMsg:
 		m.messages = append(m.messages, message{
-			role:     "tool",
-			toolID:   msg.toolID,
-			toolName: msg.toolName,
-			display:  msg.display,
+			role:          "tool",
+			toolID:        msg.toolID,
+			toolName:      msg.toolName,
+			display:       msg.display,
+			subagentDepth: msg.subagentDepth,
+			subagentDesc:  msg.subagentDesc,
 		})
 		refreshView(&m)
 		return m, readNext(m.conn)
@@ -327,7 +331,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.messages[idx].display = msg.display
 			}
 		}
-		m.messages = append(m.messages, message{role: "assistant", text: ""})
+		m.messages = append(m.messages, message{role: "assistant", text: "", subagentDepth: msg.subagentDepth, subagentDesc: msg.subagentDesc})
 		refreshView(&m)
 		return m, readNext(m.conn)
 
@@ -527,13 +531,26 @@ func (m model) renderMessages() string {
 			continue
 		}
 
+		var indent string
+		var indentW int
+		if msg.subagentDepth > 0 {
+			for d := 0; d < msg.subagentDepth; d++ {
+				indent += "  │ "
+			}
+			indentW = lipgloss.Width(indent)
+		}
+
 		var prefix string
 		if msg.role == "user" {
 			prefix = userStyle.Render(userPrefix)
 		} else if msg.role == "assistant" {
 			prefix = aiStyle.Render(aiPrefix)
 		} else if msg.role == "tool" {
-			prefix = toolStyle.Render(toolPrefix)
+			if msg.subagentDepth > 0 {
+				prefix = toolStyle.Render("Task: ")
+			} else {
+				prefix = toolStyle.Render(toolPrefix)
+			}
 		} else if msg.role == "error" {
 			prefix = errStyle.Render("Error: ")
 		} else if msg.role == "system" {
@@ -542,7 +559,7 @@ func (m model) renderMessages() string {
 			prefix = dimStyle.Render("Status: ")
 		}
 
-		prefixW := lipgloss.Width(prefix)
+		prefixW := lipgloss.Width(prefix) + indentW
 		bodyW := w - prefixW
 
 		var body string
@@ -570,7 +587,7 @@ func (m model) renderMessages() string {
 			body += dimStyle.Render(scramble(m.scrambleFrame))
 		}
 
-		s += prefix + body
+		s += indent + prefix + body
 
 		if shortID, ok := branchAfter[msg.msgID]; ok {
 			s += "\n" + renderBranchDivider(w, shortID)
