@@ -43,6 +43,8 @@ var (
 	toolBodyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	toolCodeStyle = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("252"))
 
+	blockBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
 	aiPrefixW = lipgloss.Width(aiStyle.Render(aiPrefix))
 	mdStyle   = "dark"
 )

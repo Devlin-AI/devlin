@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/styles"
+	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/devlin-ai/devlin/internal/tool"
 )
@@ -42,18 +43,18 @@ func buildToolHeader(toolName, title string) string {
 	return ""
 }
 
-func renderToolDisplay(toolName string, d tool.ToolDisplay, bodyW int, prefixW int) string {
+func renderToolDisplay(toolName string, d tool.ToolDisplay, bodyW int, prefixW int, maxLines int) string {
 	var lines []string
 	if h := buildToolHeader(toolName, d.Title); h != "" {
 		lines = append(lines, h)
 	}
 	for _, block := range d.Body {
-		lines = append(lines, renderBlock(block)...)
+		lines = append(lines, renderBlock(block, bodyW)...)
 	}
-	return renderLines(lines, toolBodyMaxLines, bodyW, prefixW)
+	return renderLines(lines, maxLines, bodyW, prefixW)
 }
 
-func renderBlock(block tool.DisplayBlock) []string {
+func renderBlock(block tool.DisplayBlock, bodyW int) []string {
 	content := processCarriageReturns(block.Content)
 	content = strings.TrimRight(content, "\n")
 	if content == "" {
@@ -62,13 +63,13 @@ func renderBlock(block tool.DisplayBlock) []string {
 	raw := strings.Split(content, "\n")
 	switch block.Type {
 	case tool.DisplayDiff:
-		return renderDiffLines(strings.Join(raw, "\n"))
+		return borderLines(renderDiffLines(strings.Join(raw, "\n")), bodyW)
 	case tool.DisplayCode:
 		lines := make([]string, len(raw))
 		for i, l := range raw {
 			lines[i] = toolCodeStyle.Render(l)
 		}
-		return lines
+		return borderLines(lines, bodyW)
 	default:
 		lines := make([]string, len(raw))
 		for i, l := range raw {
@@ -76,6 +77,23 @@ func renderBlock(block tool.DisplayBlock) []string {
 		}
 		return lines
 	}
+}
+
+func borderLines(lines []string, bodyW int) []string {
+	if len(lines) == 0 {
+		return lines
+	}
+	top := blockBorderStyle.Render("┌" + strings.Repeat("─", bodyW-2) + "┐")
+	bot := blockBorderStyle.Render("└" + strings.Repeat("─", bodyW-2) + "┘")
+	bordered := make([]string, len(lines))
+	for i, l := range lines {
+		pad := bodyW - 2 - lipgloss.Width(l)
+		if pad < 0 {
+			pad = 0
+		}
+		bordered[i] = blockBorderStyle.Render("│") + l + strings.Repeat(" ", pad) + blockBorderStyle.Render("│")
+	}
+	return append(append([]string{top}, bordered...), bot)
 }
 
 func renderDiffLines(diff string) []string {
@@ -127,7 +145,7 @@ func renderLines(lines []string, maxLines int, bodyW int, prefixW int) string {
 		return ""
 	}
 
-	if len(lines) > maxLines {
+	if maxLines > 0 && len(lines) > maxLines {
 		tailLines := maxLines - 2
 		if tailLines < 1 {
 			tailLines = 1

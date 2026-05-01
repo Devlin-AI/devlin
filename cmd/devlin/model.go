@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/devlin-ai/devlin/internal/channel"
+	"github.com/devlin-ai/devlin/internal/config"
 	"github.com/devlin-ai/devlin/internal/tool"
 	"github.com/gorilla/websocket"
 )
@@ -44,6 +45,14 @@ type model struct {
 	reconnectDots    int
 	reconnectAttempt int
 	sessionID        string
+	unlimitedTools   map[string]bool
+}
+
+func (m model) toolMaxLines(toolName string) int {
+	if m.unlimitedTools[toolName] {
+		return 0
+	}
+	return toolBodyMaxLines
 }
 
 func initialModel() model {
@@ -201,6 +210,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.mdWidth = m.viewport.Width - aiPrefixW
 		m.mdRenderer = newMDRenderer(m.mdWidth)
+		defaultUnlimited := []string{"edit", "write", "read"}
+		m.unlimitedTools = make(map[string]bool, len(defaultUnlimited))
+		cfg, _ := config.Load()
+		list := defaultUnlimited
+		if cfg != nil && len(cfg.TUI.UnlimitedTools) > 0 {
+			list = cfg.TUI.UnlimitedTools
+		}
+		for _, name := range list {
+			m.unlimitedTools[name] = true
+		}
 		return m, tea.Batch(readNext(m.conn), sendNew(m.conn))
 
 	case scrambleTickMsg:
@@ -428,7 +447,7 @@ func (m model) renderMessages() string {
 			if msg.rawContent != "" {
 				body = renderStreamingTool(msg.toolName, msg.display.Title, msg.rawContent, bodyW, prefixW)
 			} else {
-				body = renderToolDisplay(msg.toolName, msg.display, bodyW, prefixW)
+				body = renderToolDisplay(msg.toolName, msg.display, bodyW, prefixW, m.toolMaxLines(msg.toolName))
 			}
 		} else {
 			wrapped := ansi.Wrap(strings.TrimRight(msg.text, "\n"), bodyW, " ")

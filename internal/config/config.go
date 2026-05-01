@@ -49,10 +49,15 @@ func stripComments(data []byte) []byte {
 	return out
 }
 
+type TUIConfig struct {
+	UnlimitedTools []string `json:"unlimited_tools,omitempty"`
+}
+
 type Config struct {
 	Gateway GatewayConfig `json:"gateway"`
 	LLM     LLMConfig     `json:"llm"`
 	Session SessionConfig `json:"session"`
+	TUI     TUIConfig     `json:"tui"`
 }
 
 type SessionConfig struct {
