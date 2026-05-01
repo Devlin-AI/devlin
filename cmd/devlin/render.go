@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
+	"github.com/devlin-ai/devlin/internal/channel"
 	"github.com/devlin-ai/devlin/internal/tool"
 )
 
@@ -188,3 +189,48 @@ func newMDRenderer(width int) *glamour.TermRenderer {
 }
 
 func ptrUint(v uint) *uint { return &v }
+
+func renderBranchDivider(w int, shortID string) string {
+	label := "branch " + shortID
+	total := len(label) + 2
+	if total >= w {
+		return dimStyle.Render(label)
+	}
+	side := (w - total) / 2
+	line := strings.Repeat("─", side)
+	return dimStyle.Render(line + " " + label + " " + strings.Repeat("─", w-total-side))
+}
+
+func truncID(id string) string {
+	if len(id) > 7 {
+		return id[:7]
+	}
+	return id
+}
+
+func renderBranchTree(branches []channel.BranchInfo, w int) string {
+	var s string
+	for i, b := range branches {
+		connector := "├─ "
+		if i == len(branches)-1 {
+			connector = "└─ "
+		}
+		label := truncID(b.SessionID)
+		if b.FirstMessage != "" {
+			firstLine := b.FirstMessage
+			if idx := strings.IndexByte(firstLine, '\n'); idx >= 0 {
+				firstLine = firstLine[:idx]
+			}
+			truncLen := w - len(connector) - len(label) - 4
+			if truncLen < 10 {
+				truncLen = 10
+			}
+			if len(firstLine) > truncLen {
+				firstLine = firstLine[:truncLen-3] + "..."
+			}
+			label += ": " + firstLine
+		}
+		s += dimStyle.Render(connector+label) + "\n"
+	}
+	return s
+}
