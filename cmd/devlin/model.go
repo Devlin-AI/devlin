@@ -48,6 +48,9 @@ type model struct {
 	lastMsgID        int64
 	parent           *channel.BranchInfo
 	childBranches    []channel.BranchInfo
+	branchPoints     []channel.BranchPoint
+	siblings         []channel.BranchInfo
+	siblingIdx       int
 	unlimitedTools   map[string]bool
 }
 
@@ -350,14 +353,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wsSessionCreatedMsg:
 		m.sessionID = msg.sessionID
 		if m.conn != nil {
-			return m, readNext(m.conn)
+			return m, tea.Batch(readNext(m.conn), sendGetHistoryAndBranches(m.conn, m.sessionID))
 		}
 		return m, nil
 
 	case wsSessionContinuedMsg:
 		m.sessionID = msg.sessionID
 		if m.conn != nil {
-			return m, readNext(m.conn)
+			return m, tea.Batch(readNext(m.conn), sendGetHistoryAndBranches(m.conn, m.sessionID))
 		}
 		return m, nil
 
@@ -368,13 +371,49 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.childBranches = nil
 		refreshView(&m)
 		if m.conn != nil {
-			return m, readNext(m.conn)
+			return m, tea.Batch(readNext(m.conn), sendGetHistoryAndBranches(m.conn, m.sessionID))
 		}
 		return m, nil
 
 	case wsBranchListMsg:
 		m.parent = msg.parent
 		m.childBranches = msg.branches
+		refreshView(&m)
+		if m.conn != nil {
+			return m, readNext(m.conn)
+		}
+		return m, nil
+
+	case wsHistoryMsg:
+		m.sessionID = msg.sessionID
+		m.messages = nil
+		m.lastMsgID = 0
+		for _, hm := range msg.messages {
+			msg := message{
+				role:  hm.Role,
+				msgID: hm.ID,
+				text:  hm.Content,
+			}
+			if hm.Role == "tool" && hm.ToolName != "" {
+				msg.role = "tool"
+				msg.toolName = hm.ToolName
+				if t, ok := tool.Get(hm.ToolName); ok {
+					msg.display = t.Display(hm.ToolArgs, hm.Content)
+				} else {
+					msg.display = tool.ToolDisplay{
+						Body: []tool.DisplayBlock{
+							{Type: tool.DisplayText, Content: hm.Content},
+						},
+					}
+				}
+			}
+			m.messages = append(m.messages, msg)
+			if hm.Role == "assistant" {
+				m.lastMsgID = hm.ID
+			}
+		}
+		m.branchPoints = msg.branchPoints
+		m.renderAllMarkdown(true)
 		refreshView(&m)
 		if m.conn != nil {
 			return m, readNext(m.conn)

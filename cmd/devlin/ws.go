@@ -70,6 +70,11 @@ type wsBranchListMsg struct {
 type wsSessionListMsg struct {
 	sessions []channel.SessionInfo
 }
+type wsHistoryMsg struct {
+	sessionID    string
+	messages     []channel.HistoryMessage
+	branchPoints []channel.BranchPoint
+}
 
 func sendNew(conn *websocket.Conn) tea.Cmd {
 	return func() tea.Msg {
@@ -105,10 +110,12 @@ func sendSwitchSession(conn *websocket.Conn, sessionID string) tea.Cmd {
 	}
 }
 
-func sendListBranches(conn *websocket.Conn) tea.Cmd {
+func sendGetHistoryAndBranches(conn *websocket.Conn, sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		err := conn.WriteJSON(channel.InboundMessage{Type: "list_branches"})
-		if err != nil {
+		if err := conn.WriteJSON(channel.InboundMessage{Type: "get_history", SessionID: sessionID}); err != nil {
+			return wsErrorMsg{text: err.Error()}
+		}
+		if err := conn.WriteJSON(channel.InboundMessage{Type: "list_branches"}); err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
 		return sentMsg{}
@@ -229,6 +236,12 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 			return wsBranchListMsg{parent: evt.Parent, branches: evt.Branches}
 		case "session_list":
 			return wsSessionListMsg{sessions: evt.Sessions}
+		case "history":
+			return wsHistoryMsg{
+				sessionID:    evt.SessionID,
+				messages:     evt.Messages,
+				branchPoints: evt.BranchPoints,
+			}
 		default:
 			return wsErrorMsg{text: "unknown event: " + evt.Type}
 		}
