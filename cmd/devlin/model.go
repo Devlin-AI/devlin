@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,12 +132,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "ctrl+right":
+			if m.conn != nil && len(m.childBranches) > 0 {
+				return m, sendSwitchSession(m.conn, m.childBranches[0].SessionID)
+			}
+			return m, nil
+		case "ctrl+left":
+			if m.conn != nil && m.parent != nil {
+				return m, sendSwitchSession(m.conn, m.parent.SessionID)
+			}
+			return m, nil
 		case "enter":
 			if !m.streaming && m.conn != nil && m.textarea.Value() != "" {
-				m.messages = append(m.messages, message{role: "user", text: m.textarea.Value()})
+				val := m.textarea.Value()
 				m.textarea.Reset()
 				m.textarea.SetHeight(1)
 
+				if strings.HasPrefix(val, "/branch") {
+					var arg string
+					parts := strings.Fields(val)
+					if len(parts) >= 2 {
+						arg = parts[1]
+					}
+					msgID := m.lastMsgID
+					if arg != "" {
+						if n, err := strconv.ParseInt(arg, 10, 64); err == nil {
+							msgID = n
+						}
+					}
+					if msgID > 0 {
+						return m, sendBranch(m.conn, msgID)
+					}
+					m.messages = append(m.messages, message{role: "system", text: "no message to branch from"})
+					refreshView(&m)
+					return m, nil
+				}
+
+				m.messages = append(m.messages, message{role: "user", text: val})
 				m.messages = append(m.messages, message{role: "assistant", text: ""})
 				m.streaming = true
 
@@ -144,7 +176,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
 
-				err := m.conn.WriteJSON(channel.InboundMessage{Content: m.messages[len(m.messages)-2].text})
+				err := m.conn.WriteJSON(channel.InboundMessage{Content: val})
 				if err != nil {
 					m.streaming = false
 					m.messages[len(m.messages)-1] = message{role: "error", text: err.Error()}
@@ -344,9 +376,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wsBranchCreatedMsg:
 		m.sessionID = msg.sessionID
+		m.messages = nil
+		m.parent = nil
+		m.childBranches = nil
 		refreshView(&m)
 		if m.conn != nil {
-			return m, readNext(m.conn)
+			return m, tea.Batch(readNext(m.conn), sendGetHistoryAndBranches(m.conn, m.sessionID))
 		}
 		return m, nil
 
