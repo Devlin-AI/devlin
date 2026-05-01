@@ -263,13 +263,13 @@ func main() {
 				var parent *channel.BranchInfo
 				var siblings []channel.BranchInfo
 				var siblingIdx int
-				if len(chain) >= 2 {
-					parentMeta := chain[len(chain)-2]
+				currentMeta, _ := store.LoadBranchMeta(targetID)
+				if currentMeta != nil && currentMeta.ParentID != "" {
 					parent = &channel.BranchInfo{
-						SessionID:   parentMeta.SessionID,
-						ParentMsgID: parentMeta.ParentMsgID,
+						SessionID:   currentMeta.ParentID,
+						ParentMsgID: currentMeta.ParentMsgID,
 					}
-					parentChildren, _ := store.ListBranches(parentMeta.SessionID)
+					parentChildren, _ := store.ListBranches(currentMeta.ParentID)
 					for i, pc := range parentChildren {
 						firstMsg, _ := store.GetFirstUserMessage(pc.SessionID)
 						siblings = append(siblings, channel.BranchInfo{
