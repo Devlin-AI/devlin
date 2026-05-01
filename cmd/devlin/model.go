@@ -392,6 +392,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case wsBranchCreatedMsg:
+		m.siblings = append(m.childBranches, channel.BranchInfo{SessionID: msg.sessionID})
+		m.siblingIdx = len(m.childBranches)
 		m.sessionID = msg.sessionID
 		m.messages = nil
 		m.parent = nil
