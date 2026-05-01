@@ -201,75 +201,12 @@ func main() {
 					Type:      "session_switched",
 					SessionID: switched.ID(),
 				})
-			case "list_branches":
+			case "session_state":
 				if !cs.requireSession() {
 					continue
 				}
-				branchMetas, err := cs.sess.ListBranches()
-				if err != nil {
-					log.Error("list branches failed", "error", err)
-					cs.send(channel.OutboundMessage{Type: "error", Content: err.Error()})
-					continue
-				}
-				infos := make([]channel.BranchInfo, len(branchMetas))
-				for i, b := range branchMetas {
-					firstMsg, _ := store.GetFirstUserMessage(b.SessionID)
-					infos[i] = channel.BranchInfo{
-						SessionID:    b.SessionID,
-						ParentMsgID:  b.ParentMsgID,
-						FirstMessage: firstMsg,
-					}
-				}
-				var parent *channel.BranchInfo
-				parentMeta, err := cs.sess.GetParentBranch()
-				if err != nil {
-					log.Error("get parent branch failed", "error", err)
-				} else if parentMeta != nil {
-					parent = &channel.BranchInfo{
-						SessionID:   parentMeta.ParentID,
-						ParentMsgID: parentMeta.ParentMsgID,
-					}
-				}
-				cs.send(channel.OutboundMessage{
-					Type:     "branch_list",
-					Parent:   parent,
-					Branches: infos,
-				})
-			case "list_sessions":
-				ch := cs.channel
-				if ch == "" {
-					ch = msg.Channel
-				}
-				if ch == "" {
-					cs.send(channel.OutboundMessage{Type: "session_list"})
-					continue
-				}
-				sessionMetas, err := store.ListSessions(ch)
-				if err != nil {
-					log.Error("list sessions failed", "error", err)
-					cs.send(channel.OutboundMessage{Type: "error", Content: err.Error()})
-					continue
-				}
-				infos := make([]channel.SessionInfo, len(sessionMetas))
-				for i, sm := range sessionMetas {
-					infos[i] = channel.SessionInfo{
-						ID:        sm.ID,
-						Channel:   sm.Channel,
-						Mode:      sm.Mode,
-						CreatedAt: sm.CreatedAt,
-						UpdatedAt: sm.UpdatedAt,
-					}
-				}
-				cs.send(channel.OutboundMessage{
-					Type:     "session_list",
-					Sessions: infos,
-				})
-			case "get_history":
 				targetID := msg.SessionID
 				if targetID == "" {
-					if !cs.requireSession() {
-						continue
-					}
 					targetID = cs.sess.ID()
 				}
 				msgs, err := store.LoadFullHistory(targetID)
@@ -323,13 +260,80 @@ func main() {
 					})
 				}
 
+				var parent *channel.BranchInfo
+				var siblings []channel.BranchInfo
+				var siblingIdx int
+				if len(chain) >= 2 {
+					parentMeta := chain[len(chain)-2]
+					parent = &channel.BranchInfo{
+						SessionID:   parentMeta.SessionID,
+						ParentMsgID: parentMeta.ParentMsgID,
+					}
+					parentChildren, _ := store.ListBranches(parentMeta.SessionID)
+					for i, pc := range parentChildren {
+						firstMsg, _ := store.GetFirstUserMessage(pc.SessionID)
+						siblings = append(siblings, channel.BranchInfo{
+							SessionID:    pc.SessionID,
+							ParentMsgID:  pc.ParentMsgID,
+							FirstMessage: firstMsg,
+						})
+						if pc.SessionID == targetID {
+							siblingIdx = i
+						}
+					}
+				}
+
+				childMetas, _ := store.ListBranches(targetID)
+				children := make([]channel.BranchInfo, len(childMetas))
+				for i, b := range childMetas {
+					firstMsg, _ := store.GetFirstUserMessage(b.SessionID)
+					children[i] = channel.BranchInfo{
+						SessionID:    b.SessionID,
+						ParentMsgID:  b.ParentMsgID,
+						FirstMessage: firstMsg,
+					}
+				}
+
 				cs.send(channel.OutboundMessage{
-					Type:         "history",
+					Type:         "session_state",
 					SessionID:    targetID,
 					Messages:     histMsgs,
 					BranchPoints: points,
+					Parent:       parent,
+					Branches:     children,
+					Siblings:     siblings,
+					SiblingIdx:   siblingIdx,
 				})
-			default:
+			case "list_sessions":
+				ch := cs.channel
+				if ch == "" {
+					ch = msg.Channel
+				}
+				if ch == "" {
+					cs.send(channel.OutboundMessage{Type: "session_list"})
+					continue
+				}
+				sessionMetas, err := store.ListSessions(ch)
+				if err != nil {
+					log.Error("list sessions failed", "error", err)
+					cs.send(channel.OutboundMessage{Type: "error", Content: err.Error()})
+					continue
+				}
+				infos := make([]channel.SessionInfo, len(sessionMetas))
+				for i, sm := range sessionMetas {
+					infos[i] = channel.SessionInfo{
+						ID:        sm.ID,
+						Channel:   sm.Channel,
+						Mode:      sm.Mode,
+						CreatedAt: sm.CreatedAt,
+						UpdatedAt: sm.UpdatedAt,
+					}
+				}
+				cs.send(channel.OutboundMessage{
+					Type:     "session_list",
+					Sessions: infos,
+				})
+				default:
 				if !cs.requireSession() {
 					continue
 				}

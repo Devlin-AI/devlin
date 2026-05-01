@@ -63,17 +63,17 @@ type wsSessionContinuedMsg struct {
 type wsSessionSwitchedMsg struct {
 	sessionID string
 }
-type wsBranchListMsg struct {
-	parent   *channel.BranchInfo
-	branches []channel.BranchInfo
-}
 type wsSessionListMsg struct {
 	sessions []channel.SessionInfo
 }
-type wsHistoryMsg struct {
+type wsSessionStateMsg struct {
 	sessionID    string
 	messages     []channel.HistoryMessage
 	branchPoints []channel.BranchPoint
+	parent       *channel.BranchInfo
+	children     []channel.BranchInfo
+	siblings     []channel.BranchInfo
+	siblingIdx   int
 }
 
 func sendNew(conn *websocket.Conn) tea.Cmd {
@@ -110,12 +110,9 @@ func sendSwitchSession(conn *websocket.Conn, sessionID string) tea.Cmd {
 	}
 }
 
-func sendGetHistoryAndBranches(conn *websocket.Conn, sessionID string) tea.Cmd {
+func sendSessionState(conn *websocket.Conn, sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		if err := conn.WriteJSON(channel.InboundMessage{Type: "get_history", SessionID: sessionID}); err != nil {
-			return wsErrorMsg{text: err.Error()}
-		}
-		if err := conn.WriteJSON(channel.InboundMessage{Type: "list_branches"}); err != nil {
+		if err := conn.WriteJSON(channel.InboundMessage{Type: "session_state", SessionID: sessionID}); err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
 		return sentMsg{}
@@ -232,15 +229,17 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 			return wsBranchCreatedMsg{sessionID: evt.SessionID, messageID: evt.MessageID}
 		case "session_switched":
 			return wsSessionSwitchedMsg{sessionID: evt.SessionID}
-		case "branch_list":
-			return wsBranchListMsg{parent: evt.Parent, branches: evt.Branches}
 		case "session_list":
 			return wsSessionListMsg{sessions: evt.Sessions}
-		case "history":
-			return wsHistoryMsg{
+		case "session_state":
+			return wsSessionStateMsg{
 				sessionID:    evt.SessionID,
 				messages:     evt.Messages,
 				branchPoints: evt.BranchPoints,
+				parent:       evt.Parent,
+				children:     evt.Branches,
+				siblings:     evt.Siblings,
+				siblingIdx:   evt.SiblingIdx,
 			}
 		default:
 			return wsErrorMsg{text: "unknown event: " + evt.Type}

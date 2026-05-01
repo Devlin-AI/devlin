@@ -134,29 +134,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "ctrl+right":
 			if m.conn != nil && len(m.childBranches) > 0 && !m.streaming {
-				idx := len(m.childBranches) - 1
-				m.siblings = m.childBranches
-				m.siblingIdx = idx
-				return m, sendSwitchSession(m.conn, m.childBranches[idx].SessionID)
+				return m, sendSwitchSession(m.conn, m.childBranches[len(m.childBranches)-1].SessionID)
 			}
 			return m, nil
 		case "ctrl+left":
 			if m.conn != nil && m.parent != nil && !m.streaming {
-				m.siblings = nil
-				m.siblingIdx = -1
 				return m, sendSwitchSession(m.conn, m.parent.SessionID)
 			}
 			return m, nil
 		case "ctrl+up":
 			if m.conn != nil && m.siblingIdx > 0 && !m.streaming {
-				m.siblingIdx--
-				return m, sendSwitchSession(m.conn, m.siblings[m.siblingIdx].SessionID)
+				return m, sendSwitchSession(m.conn, m.siblings[m.siblingIdx-1].SessionID)
 			}
 			return m, nil
 		case "ctrl+down":
-			if m.conn != nil && m.siblingIdx >= 0 && m.siblingIdx < len(m.siblings)-1 && !m.streaming {
-				m.siblingIdx++
-				return m, sendSwitchSession(m.conn, m.siblings[m.siblingIdx].SessionID)
+			if m.conn != nil && m.siblingIdx < len(m.siblings)-1 && !m.streaming {
+				return m, sendSwitchSession(m.conn, m.siblings[m.siblingIdx+1].SessionID)
 			}
 			return m, nil
 		case "enter":
@@ -392,29 +385,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case wsBranchCreatedMsg:
-		m.siblings = append(m.childBranches, channel.BranchInfo{SessionID: msg.sessionID})
-		m.siblingIdx = len(m.childBranches)
 		m.sessionID = msg.sessionID
 		m.messages = nil
 		m.parent = nil
 		m.childBranches = nil
+		m.siblings = nil
+		m.siblingIdx = 0
 		refreshView(&m)
 		if m.conn != nil {
-			return m, tea.Batch(readNext(m.conn), sendGetHistoryAndBranches(m.conn, m.sessionID))
+			return m, tea.Batch(readNext(m.conn), sendSessionState(m.conn, m.sessionID))
 		}
 		return m, nil
 
 	case wsSessionCreatedMsg:
 		m.sessionID = msg.sessionID
 		if m.conn != nil {
-			return m, tea.Batch(readNext(m.conn), sendGetHistoryAndBranches(m.conn, m.sessionID))
+			return m, tea.Batch(readNext(m.conn), sendSessionState(m.conn, m.sessionID))
 		}
 		return m, nil
 
 	case wsSessionContinuedMsg:
 		m.sessionID = msg.sessionID
 		if m.conn != nil {
-			return m, tea.Batch(readNext(m.conn), sendGetHistoryAndBranches(m.conn, m.sessionID))
+			return m, tea.Batch(readNext(m.conn), sendSessionState(m.conn, m.sessionID))
 		}
 		return m, nil
 
@@ -425,20 +418,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.childBranches = nil
 		refreshView(&m)
 		if m.conn != nil {
-			return m, tea.Batch(readNext(m.conn), sendGetHistoryAndBranches(m.conn, m.sessionID))
+			return m, tea.Batch(readNext(m.conn), sendSessionState(m.conn, m.sessionID))
 		}
 		return m, nil
 
-	case wsBranchListMsg:
-		m.parent = msg.parent
-		m.childBranches = msg.branches
-		refreshView(&m)
-		if m.conn != nil {
-			return m, readNext(m.conn)
-		}
-		return m, nil
-
-	case wsHistoryMsg:
+	case wsSessionStateMsg:
 		m.sessionID = msg.sessionID
 		m.messages = nil
 		m.lastMsgID = 0
@@ -467,6 +451,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.branchPoints = msg.branchPoints
+		m.parent = msg.parent
+		m.childBranches = msg.children
+		m.siblings = msg.siblings
+		m.siblingIdx = msg.siblingIdx
 		m.renderAllMarkdown(true)
 		refreshView(&m)
 		if m.conn != nil {

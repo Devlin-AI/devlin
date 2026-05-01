@@ -23,6 +23,8 @@ type OutboundMessage struct {
 	Sessions     []SessionInfo    `json:"sessions,omitempty"`
 	Messages     []HistoryMessage `json:"messages,omitempty"`
 	BranchPoints []BranchPoint    `json:"branch_points,omitempty"`
+	Siblings     []BranchInfo     `json:"siblings,omitempty"`
+	SiblingIdx   int              `json:"sibling_idx,omitempty"`
 }
 
 type BranchInfo struct {
