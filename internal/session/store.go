@@ -368,6 +368,18 @@ func (s *Store) GetParentBranch(sessionID string) (*BranchMeta, error) {
 	return s.LoadBranchMeta(sessionID)
 }
 
+func (s *Store) GetFirstUserMessage(sessionID string) (string, error) {
+	var content string
+	err := s.db.QueryRow(
+		"SELECT content FROM messages WHERE session_id = ? AND role = 'user' ORDER BY id ASC LIMIT 1",
+		sessionID,
+	).Scan(&content)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return content, err
+}
+
 func (s *Store) ListSessions(channel string) ([]SessionMeta, error) {
 	rows, err := s.db.Query(
 		"SELECT id, channel, mode, created_at, updated_at FROM sessions WHERE channel = ? ORDER BY updated_at DESC",

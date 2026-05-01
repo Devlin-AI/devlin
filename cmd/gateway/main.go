@@ -213,9 +213,11 @@ func main() {
 				}
 				infos := make([]channel.BranchInfo, len(branchMetas))
 				for i, b := range branchMetas {
+					firstMsg, _ := store.GetFirstUserMessage(b.SessionID)
 					infos[i] = channel.BranchInfo{
-						SessionID:   b.SessionID,
-						ParentMsgID: b.ParentMsgID,
+						SessionID:    b.SessionID,
+						ParentMsgID:  b.ParentMsgID,
+						FirstMessage: firstMsg,
 					}
 				}
 				var parent *channel.BranchInfo
@@ -261,6 +263,71 @@ func main() {
 				cs.send(channel.OutboundMessage{
 					Type:     "session_list",
 					Sessions: infos,
+				})
+			case "get_history":
+				targetID := msg.SessionID
+				if targetID == "" {
+					if !cs.requireSession() {
+						continue
+					}
+					targetID = cs.sess.ID()
+				}
+				msgs, err := store.LoadFullHistory(targetID)
+				if err != nil {
+					log.Error("load history failed", "error", err)
+					cs.send(channel.OutboundMessage{Type: "error", Content: err.Error()})
+					continue
+				}
+
+				toolCallArgs := make(map[string]string)
+				for _, m := range msgs {
+					if m.Role == "assistant" {
+						for _, tc := range m.ToolCalls {
+							toolCallArgs[tc.ID] = tc.Function.Arguments
+						}
+					}
+				}
+
+				histMsgs := make([]channel.HistoryMessage, 0, len(msgs))
+				for _, m := range msgs {
+					var toolCallsJSON string
+					if len(m.ToolCalls) > 0 {
+						if b, err := json.Marshal(m.ToolCalls); err == nil {
+							toolCallsJSON = string(b)
+						}
+					}
+					hm := channel.HistoryMessage{
+						ID:        m.ID,
+						Role:      string(m.Role),
+						Content:   m.Content,
+						ToolName:  m.ToolName,
+						ToolCalls: toolCallsJSON,
+					}
+					if m.Role == "tool" {
+						hm.ToolArgs = toolCallArgs[m.ToolCallID]
+					}
+					histMsgs = append(histMsgs, hm)
+				}
+
+				chain, err := store.LoadBranchChain(targetID)
+				if err != nil {
+					log.Error("load branch chain failed", "error", err)
+					cs.send(channel.OutboundMessage{Type: "error", Content: err.Error()})
+					continue
+				}
+				points := make([]channel.BranchPoint, 0, len(chain))
+				for _, c := range chain {
+					points = append(points, channel.BranchPoint{
+						MsgID:     c.ParentMsgID,
+						SessionID: c.SessionID,
+					})
+				}
+
+				cs.send(channel.OutboundMessage{
+					Type:         "history",
+					SessionID:    targetID,
+					Messages:     histMsgs,
+					BranchPoints: points,
 				})
 			default:
 				if !cs.requireSession() {
