@@ -62,6 +62,7 @@ type Config struct {
 
 type SessionConfig struct {
 	IdleTimeout string `json:"idle_timeout"`
+	MaxDepth    int    `json:"max_depth"`
 }
 
 type GatewayConfig struct {

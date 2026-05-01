@@ -33,9 +33,12 @@ type Session struct {
 	cancel       context.CancelFunc
 	parentID     string
 	branchPoint  int64
+	depth        int
+	maxDepth     int
+	emitter      EventEmitter
 }
 
-func New(provider llm.Provider, store *Store, ch string, mode string, model string, onEvent func(Event)) (*Session, error) {
+func New(provider llm.Provider, store *Store, ch string, mode string, model string, maxDepth int, onEvent func(Event)) (*Session, error) {
 	id := uuid.New().String()
 
 	if err := store.CreateSession(id, ch, mode); err != nil {
@@ -54,16 +57,22 @@ func New(provider llm.Provider, store *Store, ch string, mode string, model stri
 		model:        model,
 		systemPrompt: sysPrompt,
 		onEvent:      onEvent,
+		maxDepth:     maxDepth,
 	}
+	s.emitter = s
 
 	if _, err := s.store.persistMessage(id, "tool_defs", string(marshalToolCalls(buildToolDefs())), nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist tool_defs", "session_id", id, "error", err)
 	}
 
+	if _, err := s.store.persistMessage(id, "system_prompt", sysPrompt, nil, "", "", "", "", nil); err != nil {
+		logger.L().Error("failed to persist system_prompt", "session_id", id, "error", err)
+	}
+
 	return s, nil
 }
 
-func Load(provider llm.Provider, store *Store, sessionID string, model string, onEvent func(Event)) (*Session, error) {
+func Load(provider llm.Provider, store *Store, sessionID string, model string, maxDepth int, onEvent func(Event)) (*Session, error) {
 	history, err := store.LoadFullHistory(sessionID)
 	if err != nil {
 		return nil, err
@@ -81,6 +90,12 @@ func Load(provider llm.Provider, store *Store, sessionID string, model string, o
 		branchPoint = meta.ParentMsgID
 	}
 
+	depth, err := store.ComputeDepth(sessionID)
+	if err != nil {
+		logger.L().Warn("failed to compute depth", "session_id", sessionID, "error", err)
+		depth = 0
+	}
+
 	cwd, _ := os.Getwd()
 	sysPrompt := prompt.Build(cwd, tool.All())
 
@@ -94,7 +109,10 @@ func Load(provider llm.Provider, store *Store, sessionID string, model string, o
 		onEvent:      onEvent,
 		parentID:     parentID,
 		branchPoint:  branchPoint,
+		depth:        depth,
+		maxDepth:     maxDepth,
 	}
+	s.emitter = s
 
 	row := store.db.QueryRow("SELECT channel, mode FROM sessions WHERE id = ?", sessionID)
 	if err := row.Scan(&s.channel, &s.mode); err != nil {
@@ -182,6 +200,7 @@ func (s *Session) Branch(msgID int64) (*Session, error) {
 		onEvent:      s.onEvent,
 		parentID:     s.id,
 		branchPoint:  msgID,
+		maxDepth:     s.maxDepth,
 	}
 
 	return branch, nil
@@ -228,6 +247,7 @@ func (s *Session) SwitchTo(sessionID string) (*Session, error) {
 		onEvent:      s.onEvent,
 		parentID:     parentID,
 		branchPoint:  branchPoint,
+		maxDepth:     s.maxDepth,
 	}
 
 	return target, nil
@@ -239,6 +259,96 @@ func (s *Session) ListBranches() ([]BranchMeta, error) {
 
 func (s *Session) GetParentBranch() (*BranchMeta, error) {
 	return s.store.GetParentBranch(s.id)
+}
+
+func (s *Session) MaxDepth() int {
+	return s.maxDepth
+}
+
+func (s *Session) Depth() int {
+	return s.depth
+}
+
+func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt string) (string, error) {
+	if s.maxDepth > 0 && s.depth >= s.maxDepth {
+		return "", fmt.Errorf("maximum subagent depth (%d) reached", s.maxDepth)
+	}
+
+	childID := uuid.New().String()
+
+	if err := s.store.CreateSession(childID, s.channel, s.mode); err != nil {
+		return "", fmt.Errorf("create subagent session: %w", err)
+	}
+
+	if err := s.store.CreateBranch(childID, s.id, 0); err != nil {
+		return "", fmt.Errorf("create subagent branch: %w", err)
+	}
+
+	subTools := buildSubagentTools(s.depth+1, s.maxDepth)
+	cwd, _ := os.Getwd()
+	subPrompt := prompt.Build(cwd, subTools)
+
+	subEmitter := NewSubagentEmitter(s.onEvent, s.depth+1, description)
+
+	child := &Session{
+		id:           childID,
+		channel:      s.channel,
+		mode:         s.mode,
+		provider:     s.provider,
+		store:        s.store,
+		model:        s.model,
+		systemPrompt: subPrompt,
+		onEvent:      subEmitter.SendEvent,
+		parentID:     s.id,
+		depth:        s.depth + 1,
+		maxDepth:     s.maxDepth,
+	}
+	child.emitter = subEmitter
+
+	if _, err := s.store.persistMessage(childID, "tool_defs", string(marshalToolCalls(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
+		logger.L().Error("failed to persist subagent tool_defs", "session_id", childID, "error", err)
+	}
+
+	if _, err := s.store.persistMessage(childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
+		logger.L().Error("failed to persist subagent system_prompt", "session_id", childID, "error", err)
+	}
+
+	child.ProcessMessage(taskPrompt)
+
+	for i := len(child.history) - 1; i >= 0; i-- {
+		if child.history[i].Role == message.RoleAssistant {
+			return child.history[i].Content, nil
+		}
+	}
+
+	return "", fmt.Errorf("subagent produced no output")
+}
+
+func buildSubagentTools(depth, maxDepth int) map[string]tool.Tool {
+	all := tool.All()
+	filtered := make(map[string]tool.Tool, len(all))
+	for name, t := range all {
+		if name == "task" && maxDepth > 0 && depth >= maxDepth {
+			continue
+		}
+		filtered[name] = t
+	}
+	return filtered
+}
+
+func buildToolDefsWithTools(tools map[string]tool.Tool) []message.ToolDef {
+	defs := make([]message.ToolDef, 0, len(tools))
+	for _, t := range tools {
+		defs = append(defs, message.ToolDef{
+			Type: "function",
+			Function: message.FunctionDef{
+				Name:        t.Name(),
+				Description: t.Description(),
+				Parameters:  t.Parameters(),
+			},
+		})
+	}
+	return defs
 }
 
 func (s *Session) ProcessMessage(content string) {
@@ -257,20 +367,20 @@ func (s *Session) ProcessMessage(content string) {
 	s.processLoop()
 }
 
-func (s *Session) sendEvent(evt Event) {
+func (s *Session) SendEvent(evt Event) {
 	if s.onEvent != nil {
 		s.onEvent(evt)
 	}
 }
 
-func (s *Session) sendToolStart(tc toolCall) {
+func (s *Session) SendToolStart(tc toolCall) {
 	t, ok := tool.Get(tc.Name)
 	if !ok {
 		return
 	}
 	disp := t.Display(tc.Args, "")
 	disp.Body = nil
-	s.sendEvent(Event{
+	s.emitter.SendEvent(Event{
 		Type:     "tool_start",
 		ToolName: tc.Name,
 		ToolID:   tc.ID,
@@ -295,10 +405,20 @@ func retryBackoff(attempt int) time.Duration {
 }
 
 func (s *Session) processLoop() {
+	ctx := tool.ContextWithSpawner(context.Background(), s)
 	toolDefs := buildToolDefs()
 
 	for {
-		ctx, cancel := context.WithCancel(context.Background())
+		cwd, _ := os.Getwd()
+		newPrompt := prompt.Build(cwd, tool.All())
+		if newPrompt != s.systemPrompt {
+			s.systemPrompt = newPrompt
+			if _, err := s.store.persistMessage(s.id, "system_prompt", newPrompt, nil, "", "", "", "", nil); err != nil {
+				logger.L().Error("failed to persist system_prompt", "session_id", s.id, "error", err)
+			}
+		}
+
+		ctx, cancel := context.WithCancel(ctx)
 		s.setCancel(cancel)
 
 		messages := s.history
@@ -315,10 +435,11 @@ func (s *Session) processLoop() {
 		var thinkingText string
 		var toolCalls []toolCall
 		var streamErr error
+		var streamUsage *message.Usage
 
 		for attempt := 0; attempt <= maxProviderRetries; attempt++ {
 			if attempt > 0 {
-				s.sendEvent(Event{Type: "status", Content: fmt.Sprintf("Retrying... attempt %d/%d", attempt, maxProviderRetries)})
+				s.emitter.SendEvent(Event{Type: "status", Content: fmt.Sprintf("Retrying... attempt %d/%d", attempt, maxProviderRetries)})
 				select {
 				case <-ctx.Done():
 				case <-time.After(retryBackoff(attempt - 1)):
@@ -326,7 +447,7 @@ func (s *Session) processLoop() {
 			}
 
 			if ctx.Err() != nil {
-				s.sendEvent(Event{Type: "cancelled"})
+				s.emitter.SendEvent(Event{Type: "cancelled"})
 				s.history = s.history[:len(s.history)-1]
 				s.setCancel(nil)
 				return
@@ -335,11 +456,11 @@ func (s *Session) processLoop() {
 			ch, err := s.provider.Stream(ctx, messages, toolDefs)
 			if err != nil {
 				if ctx.Err() != nil {
-					s.sendEvent(Event{Type: "cancelled"})
+					s.emitter.SendEvent(Event{Type: "cancelled"})
 					s.history = s.history[:len(s.history)-1]
 				} else {
 					logger.L().Error("stream failed", "error", err)
-					s.sendEvent(Event{Type: "error", Content: err.Error()})
+					s.emitter.SendEvent(Event{Type: "error", Content: err.Error()})
 				}
 				s.setCancel(nil)
 				return
@@ -349,20 +470,25 @@ func (s *Session) processLoop() {
 			thinkingText = ""
 			toolCalls = nil
 			streamErr = nil
+			streamUsage = nil
 
 			var retryNeeded bool
 			for evt := range ch {
 				switch evt.Type {
 				case message.StreamEventToken:
 					assistantText += evt.Token
-					s.sendEvent(Event{Type: "token", Content: evt.Token})
+					s.emitter.SendEvent(Event{Type: "token", Content: evt.Token})
 				case message.StreamEventThinking:
 					thinkingText += evt.Token
-					s.sendEvent(Event{Type: "thinking", Content: evt.Token})
+					s.emitter.SendEvent(Event{Type: "thinking", Content: evt.Token})
+				case message.StreamEventDone:
+					if evt.Usage != nil {
+						streamUsage = evt.Usage
+					}
 			case message.StreamEventToolStart:
 				if evt.ToolID != "" {
 					if len(toolCalls) > 0 {
-						s.sendToolStart(toolCalls[len(toolCalls)-1])
+						s.emitter.SendToolStart(toolCalls[len(toolCalls)-1])
 					}
 					toolCalls = append(toolCalls, toolCall{
 						ID:   evt.ToolID,
@@ -374,7 +500,7 @@ func (s *Session) processLoop() {
 				}
 				case message.StreamEventError:
 					if ctx.Err() != nil {
-						s.sendEvent(Event{Type: "cancelled"})
+						s.emitter.SendEvent(Event{Type: "cancelled"})
 						s.history = s.history[:len(s.history)-1]
 						s.setCancel(nil)
 						return
@@ -385,7 +511,7 @@ func (s *Session) processLoop() {
 						streamErr = fmt.Errorf("HTTP %d: %s", evt.StatusCode, evt.Error)
 					} else {
 						logger.L().Error("stream event error", "error", evt.Error, "status", evt.StatusCode)
-						s.sendEvent(Event{Type: "error", Content: evt.Error})
+						s.emitter.SendEvent(Event{Type: "error", Content: evt.Error})
 						s.setCancel(nil)
 						return
 					}
@@ -402,7 +528,7 @@ func (s *Session) processLoop() {
 
 		if streamErr != nil {
 			logger.L().Error("provider retries exhausted", "error", streamErr, "retries", maxProviderRetries)
-			s.sendEvent(Event{Type: "error", Content: fmt.Sprintf("Failed after %d retries: %s", maxProviderRetries, streamErr.Error())})
+			s.emitter.SendEvent(Event{Type: "error", Content: fmt.Sprintf("Failed after %d retries: %s", maxProviderRetries, streamErr.Error())})
 			s.setCancel(nil)
 			return
 		}
@@ -410,7 +536,7 @@ func (s *Session) processLoop() {
 		s.setCancel(nil)
 
 		if ctx.Err() != nil {
-			s.sendEvent(Event{Type: "cancelled"})
+			s.emitter.SendEvent(Event{Type: "cancelled"})
 			s.history = s.history[:len(s.history)-1]
 			return
 		}
@@ -443,25 +569,25 @@ func (s *Session) processLoop() {
 			"", "",
 			thinkingText,
 			s.model,
-			nil,
+			marshalUsage(streamUsage),
 		)
 		if err != nil {
 			logger.L().Error("failed to persist assistant message", "session_id", s.id, "error", err)
 		}
 
 		if len(toolCalls) == 0 {
-			s.sendEvent(Event{Type: "done", MessageID: assistantMsgID})
+			s.emitter.SendEvent(Event{Type: "done", MessageID: assistantMsgID})
 			return
 		}
 
 		if len(toolCalls) > 0 {
-			s.sendToolStart(toolCalls[len(toolCalls)-1])
+			s.emitter.SendToolStart(toolCalls[len(toolCalls)-1])
 		}
 
 		groups := s.partitionToolCalls(toolCalls)
 		for _, g := range groups {
 			if ctx.Err() != nil {
-				s.sendEvent(Event{Type: "cancelled"})
+				s.emitter.SendEvent(Event{Type: "cancelled"})
 				s.history = s.history[:len(s.history)-1]
 				return
 			}
@@ -483,7 +609,7 @@ func (s *Session) processLoop() {
 			}
 
 			if ctx.Err() != nil {
-				s.sendEvent(Event{Type: "cancelled"})
+				s.emitter.SendEvent(Event{Type: "cancelled"})
 				s.history = s.history[:len(s.history)-1]
 				return
 			}
@@ -544,7 +670,7 @@ func (s *Session) executeTool(ctx context.Context, tc toolCall) {
 			if pending == "" {
 				return
 			}
-			s.sendEvent(Event{
+			s.emitter.SendEvent(Event{
 				Type:    "tool_output",
 				Content: pending,
 				ToolID:  tc.ID,
@@ -580,12 +706,12 @@ func (s *Session) executeTool(ctx context.Context, tc toolCall) {
 }
 
 func (s *Session) completeToolCall(tc toolCall, output string, disp tool.ToolDisplay) {
-	s.sendEvent(Event{
+	s.emitter.SendEvent(Event{
 		Type:    "tool_output",
 		Content: output,
 		ToolID:  tc.ID,
 	})
-	s.sendEvent(Event{
+	s.emitter.SendEvent(Event{
 		Type:     "tool_end",
 		ToolID:   tc.ID,
 		ToolName: tc.Name,
