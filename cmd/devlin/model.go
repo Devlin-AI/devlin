@@ -45,6 +45,9 @@ type model struct {
 	reconnectDots    int
 	reconnectAttempt int
 	sessionID        string
+	lastMsgID        int64
+	parent           *channel.BranchInfo
+	childBranches    []channel.BranchInfo
 	unlimitedTools   map[string]bool
 }
 
@@ -291,6 +294,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wsDoneMsg:
 		m.streaming = false
+		if msg.messageID > 0 {
+			m.lastMsgID = msg.messageID
+		}
 		m.renderAllMarkdown(false)
 		refreshView(&m)
 		return m, readNext(m.conn)
@@ -358,6 +364,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wsSessionSwitchedMsg:
 		m.sessionID = msg.sessionID
 		m.messages = nil
+		m.parent = nil
+		m.childBranches = nil
 		refreshView(&m)
 		if m.conn != nil {
 			return m, readNext(m.conn)
@@ -365,6 +373,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case wsBranchListMsg:
+		m.parent = msg.parent
+		m.childBranches = msg.branches
 		refreshView(&m)
 		if m.conn != nil {
 			return m, readNext(m.conn)
