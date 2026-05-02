@@ -1,6 +1,7 @@
 package process
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,48 +14,90 @@ import (
 )
 
 const (
-	MaxConcurrentProcesses = 64
-	FinishedTTL            = 30 * time.Minute
+	MaxConcurrentTasks       = 64
+	FinishedTTL              = 30 * time.Minute
+	defaultBackgroundTimeout = 120 * time.Second
+)
+
+var DefaultBackgroundTimeout = defaultBackgroundTimeout
+
+func SetDefaultBackgroundTimeout(d time.Duration) {
+	DefaultBackgroundTimeout = d
+}
+
+type TaskType string
+
+const (
+	TaskTypeBash  TaskType = "bash"
+	TaskTypeAgent TaskType = "agent"
 )
 
 type ProcessSession struct {
-	ID         string
-	Command    string
-	PID        int
-	Status     string
-	ExitCode   int
-	Output     *RollingBuffer
-	CreatedAt  time.Time
-	FinishedAt time.Time
-	OnChunk    func(string)
-	mu         sync.Mutex
-	cmd        *exec.Cmd
-	ptmx       *os.File
-	done       chan struct{}
+	ID          string
+	Type        TaskType
+	Command     string
+	Description string
+	Prompt      string
+	PID         int
+	Status      string
+	ExitCode    int
+	Result      string
+	Output      *RollingBuffer
+	CreatedAt   time.Time
+	FinishedAt  time.Time
+	OnChunk     func(string)
+	OnComplete  func(*ProcessSession)
+
+	mu       sync.Mutex
+	cmd      *exec.Cmd
+	ptmx     *os.File
+	done     chan struct{}
+	bgSignal chan struct{}
+	bgTimer  *time.Timer
+	cancel   context.CancelFunc
+}
+
+type SpawnOption func(*ProcessSession)
+
+func WithAutoBackground(d time.Duration) SpawnOption {
+	return func(ps *ProcessSession) {
+		if d > 0 {
+			ps.bgTimer = time.NewTimer(d)
+		}
+	}
+}
+
+func WithOnComplete(fn func(*ProcessSession)) SpawnOption {
+	return func(ps *ProcessSession) {
+		ps.OnComplete = fn
+	}
 }
 
 type Registry struct {
-	running  map[string]*ProcessSession
-	finished map[string]*ProcessSession
-	mu       sync.RWMutex
+	running      map[string]*ProcessSession
+	backgrounded map[string]*ProcessSession
+	finished     map[string]*ProcessSession
+	mu           sync.RWMutex
 }
 
 var DefaultRegistry = NewRegistry()
 
 func NewRegistry() *Registry {
 	return &Registry{
-		running:  make(map[string]*ProcessSession),
-		finished: make(map[string]*ProcessSession),
+		running:      make(map[string]*ProcessSession),
+		backgrounded: make(map[string]*ProcessSession),
+		finished:     make(map[string]*ProcessSession),
 	}
 }
 
-func (r *Registry) Spawn(command string, onChunk func(string)) (*ProcessSession, error) {
+func (r *Registry) Spawn(command string, onChunk func(string), opts ...SpawnOption) (*ProcessSession, error) {
 	r.mu.Lock()
-	if len(r.running) >= MaxConcurrentProcesses {
-		r.mu.Unlock()
-		return nil, fmt.Errorf("max concurrent processes (%d) reached", MaxConcurrentProcesses)
-	}
+	total := len(r.running) + len(r.backgrounded)
 	r.mu.Unlock()
+
+	if total >= MaxConcurrentTasks {
+		return nil, fmt.Errorf("max concurrent tasks (%d) reached", MaxConcurrentTasks)
+	}
 
 	env := os.Environ()
 	found := false
@@ -80,6 +123,7 @@ func (r *Registry) Spawn(command string, onChunk func(string)) (*ProcessSession,
 
 	ps := &ProcessSession{
 		ID:        uuid.New().String(),
+		Type:      TaskTypeBash,
 		Command:   command,
 		PID:       cmd.Process.Pid,
 		Status:    "running",
@@ -89,15 +133,106 @@ func (r *Registry) Spawn(command string, onChunk func(string)) (*ProcessSession,
 		cmd:       cmd,
 		ptmx:      ptmx,
 		done:      make(chan struct{}),
+		bgSignal:  make(chan struct{}),
+	}
+
+	for _, opt := range opts {
+		opt(ps)
 	}
 
 	r.mu.Lock()
 	r.running[ps.ID] = ps
 	r.mu.Unlock()
 
+	if ps.bgTimer != nil {
+		go r.autoBackground(ps)
+	}
+
 	go r.readOutput(ps)
 
 	return ps, nil
+}
+
+func (r *Registry) SpawnAgent(description, prompt string, runFunc func(ctx context.Context) (string, error), opts ...SpawnOption) (*ProcessSession, error) {
+	r.mu.Lock()
+	total := len(r.running) + len(r.backgrounded)
+	r.mu.Unlock()
+
+	if total >= MaxConcurrentTasks {
+		return nil, fmt.Errorf("max concurrent tasks (%d) reached", MaxConcurrentTasks)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ps := &ProcessSession{
+		ID:          uuid.New().String(),
+		Type:        TaskTypeAgent,
+		Description: description,
+		Prompt:      prompt,
+		Status:      "running",
+		Output:      NewRollingBuffer(0),
+		CreatedAt:   time.Now(),
+		done:        make(chan struct{}),
+		bgSignal:    make(chan struct{}),
+		cancel:      cancel,
+	}
+
+	for _, opt := range opts {
+		opt(ps)
+	}
+
+	r.mu.Lock()
+	r.running[ps.ID] = ps
+	r.mu.Unlock()
+
+	if ps.bgTimer != nil {
+		go r.autoBackground(ps)
+	}
+
+	go r.runAgent(ps, ctx, runFunc)
+
+	return ps, nil
+}
+
+func (r *Registry) runAgent(ps *ProcessSession, ctx context.Context, runFunc func(ctx context.Context) (string, error)) {
+	result, err := runFunc(ctx)
+
+	ps.mu.Lock()
+	if err != nil && ctx.Err() == nil {
+		ps.Status = "failed"
+		ps.Result = fmt.Sprintf("error: %v", err)
+	} else if ctx.Err() != nil {
+		ps.Status = "killed"
+		ps.Result = result
+	} else {
+		ps.Status = "completed"
+		ps.Result = result
+	}
+	ps.FinishedAt = time.Now()
+	ps.mu.Unlock()
+
+	r.finalize(ps)
+}
+
+func (r *Registry) autoBackground(ps *ProcessSession) {
+	<-ps.bgTimer.C
+
+	ps.mu.Lock()
+	if ps.Status != "running" {
+		ps.mu.Unlock()
+		return
+	}
+	ps.Status = "backgrounded"
+	ps.mu.Unlock()
+
+	r.mu.Lock()
+	if _, ok := r.running[ps.ID]; ok {
+		delete(r.running, ps.ID)
+		r.backgrounded[ps.ID] = ps
+	}
+	r.mu.Unlock()
+
+	close(ps.bgSignal)
 }
 
 func (r *Registry) readOutput(ps *ProcessSession) {
@@ -122,28 +257,51 @@ func (r *Registry) readOutput(ps *ProcessSession) {
 	if ws, ok := ps.cmd.ProcessState.Sys().(syscall.WaitStatus); ok {
 		ps.ExitCode = ws.ExitStatus()
 	}
-	ps.Status = "exited"
+	if ps.Status != "killed" {
+		ps.Status = "completed"
+	}
 	ps.FinishedAt = time.Now()
 	ps.mu.Unlock()
 
+	r.finalize(ps)
+}
+
+func (r *Registry) finalize(ps *ProcessSession) {
 	r.mu.Lock()
-	if _, ok := r.running[ps.ID]; ok {
-		delete(r.running, ps.ID)
-		r.finished[ps.ID] = ps
-	}
+	delete(r.running, ps.ID)
+	delete(r.backgrounded, ps.ID)
+	r.finished[ps.ID] = ps
 	r.mu.Unlock()
 
-	ps.ptmx.Close()
+	if ps.ptmx != nil {
+		ps.ptmx.Close()
+	}
+
+	if ps.bgTimer != nil {
+		ps.bgTimer.Stop()
+	}
+
 	close(ps.done)
+
+	if ps.OnComplete != nil {
+		go ps.OnComplete(ps)
+	}
 }
 
 func (r *Registry) Write(id, data string) error {
 	r.mu.RLock()
 	ps, ok := r.running[id]
+	if !ok {
+		ps, ok = r.backgrounded[id]
+	}
 	r.mu.RUnlock()
 
 	if !ok {
 		return fmt.Errorf("process not found or not running: %s", id)
+	}
+
+	if ps.Type != TaskTypeBash {
+		return fmt.Errorf("write only supported for bash tasks")
 	}
 
 	ps.mu.Lock()
@@ -154,34 +312,25 @@ func (r *Registry) Write(id, data string) error {
 }
 
 func (r *Registry) Read(id string) (string, error) {
-	r.mu.RLock()
-	ps, ok := r.running[id]
-	r.mu.RUnlock()
+	ps := r.lookup(id)
+	if ps == nil {
+		return "", fmt.Errorf("task not found: %s", id)
+	}
 
-	if !ok {
-		r.mu.RLock()
-		ps, ok = r.finished[id]
-		r.mu.RUnlock()
-		if !ok {
-			return "", fmt.Errorf("process not found: %s", id)
-		}
+	if ps.Type == TaskTypeAgent && ps.Result != "" {
+		return ps.Result, nil
 	}
 
 	return ps.Output.Read(), nil
 }
 
 func (r *Registry) Wait(id string, timeout time.Duration) (*ProcessSession, error) {
-	r.mu.RLock()
-	ps, ok := r.running[id]
-	r.mu.RUnlock()
+	ps := r.lookup(id)
+	if ps == nil {
+		return nil, fmt.Errorf("task not found: %s", id)
+	}
 
-	if !ok {
-		r.mu.RLock()
-		ps, ok = r.finished[id]
-		r.mu.RUnlock()
-		if !ok {
-			return nil, fmt.Errorf("process not found: %s", id)
-		}
+	if isFinished(ps) {
 		return ps, nil
 	}
 
@@ -191,48 +340,70 @@ func (r *Registry) Wait(id string, timeout time.Duration) (*ProcessSession, erro
 			return nil, fmt.Errorf("wait timeout")
 		case <-ps.done:
 			return ps, nil
+		case <-ps.bgSignal:
+			return ps, nil
 		}
 	}
 
-	<-ps.done
-	return ps, nil
+	select {
+	case <-ps.done:
+		return ps, nil
+	case <-ps.bgSignal:
+		return ps, nil
+	}
 }
 
 func (r *Registry) Kill(id string) error {
 	r.mu.RLock()
-	ps, ok := r.running[id]
+	ps := r.lookupLive(id)
 	r.mu.RUnlock()
 
-	if !ok {
-		return fmt.Errorf("process not found or not running: %s", id)
+	if ps == nil {
+		return fmt.Errorf("task not found or not running: %s", id)
 	}
 
-	ps.cmd.Process.Signal(syscall.SIGTERM)
-
-	time.Sleep(200 * time.Millisecond)
-
-	if ps.cmd.ProcessState == nil {
-		ps.cmd.Process.Kill()
+	if ps.Type == TaskTypeBash && ps.cmd != nil && ps.cmd.Process != nil {
+		ps.cmd.Process.Signal(syscall.SIGTERM)
+		time.Sleep(200 * time.Millisecond)
+		if ps.cmd.ProcessState == nil {
+			ps.cmd.Process.Kill()
+		}
 	}
+
+	if ps.cancel != nil {
+		ps.cancel()
+	}
+
+	ps.mu.Lock()
+	ps.Status = "killed"
+	ps.FinishedAt = time.Now()
+	ps.mu.Unlock()
 
 	r.mu.Lock()
-	if _, ok := r.running[id]; ok {
-		delete(r.running, id)
-		ps.Status = "killed"
-		ps.FinishedAt = time.Now()
-		r.finished[id] = ps
-	}
+	delete(r.running, id)
+	delete(r.backgrounded, id)
+	r.finished[id] = ps
 	r.mu.Unlock()
+
+	if ps.ptmx != nil {
+		ps.ptmx.Close()
+	}
+	if ps.bgTimer != nil {
+		ps.bgTimer.Stop()
+	}
 
 	return nil
 }
 
 func (r *Registry) List() []*ProcessSession {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 
-	result := make([]*ProcessSession, 0, len(r.running)+len(r.finished))
+	result := make([]*ProcessSession, 0, len(r.running)+len(r.backgrounded)+len(r.finished))
 	for _, ps := range r.running {
+		result = append(result, ps)
+	}
+	for _, ps := range r.backgrounded {
 		result = append(result, ps)
 	}
 	for _, ps := range r.finished {
@@ -242,19 +413,10 @@ func (r *Registry) List() []*ProcessSession {
 }
 
 func (r *Registry) Poll(id string) (*ProcessSession, error) {
-	r.mu.RLock()
-	ps, ok := r.running[id]
-	r.mu.RUnlock()
-
-	if !ok {
-		r.mu.RLock()
-		ps, ok = r.finished[id]
-		r.mu.RUnlock()
-		if !ok {
-			return nil, fmt.Errorf("process not found: %s", id)
-		}
+	ps := r.lookup(id)
+	if ps == nil {
+		return nil, fmt.Errorf("task not found: %s", id)
 	}
-
 	return ps, nil
 }
 
@@ -276,9 +438,61 @@ func KillAll() {
 	defer r.mu.Unlock()
 
 	for _, ps := range r.running {
-		ps.cmd.Process.Kill()
-		ps.ptmx.Close()
+		if ps.Type == TaskTypeBash && ps.cmd != nil && ps.cmd.Process != nil {
+			ps.cmd.Process.Kill()
+		}
+		if ps.cancel != nil {
+			ps.cancel()
+		}
+		if ps.ptmx != nil {
+			ps.ptmx.Close()
+		}
+		ps.Status = "killed"
+	}
+	for _, ps := range r.backgrounded {
+		if ps.Type == TaskTypeBash && ps.cmd != nil && ps.cmd.Process != nil {
+			ps.cmd.Process.Kill()
+		}
+		if ps.cancel != nil {
+			ps.cancel()
+		}
+		if ps.ptmx != nil {
+			ps.ptmx.Close()
+		}
 		ps.Status = "killed"
 	}
 	r.running = make(map[string]*ProcessSession)
+	r.backgrounded = make(map[string]*ProcessSession)
+}
+
+func (r *Registry) lookup(id string) *ProcessSession {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if ps, ok := r.running[id]; ok {
+		return ps
+	}
+	if ps, ok := r.backgrounded[id]; ok {
+		return ps
+	}
+	if ps, ok := r.finished[id]; ok {
+		return ps
+	}
+	return nil
+}
+
+func (r *Registry) lookupLive(id string) *ProcessSession {
+	if ps, ok := r.running[id]; ok {
+		return ps
+	}
+	if ps, ok := r.backgrounded[id]; ok {
+		return ps
+	}
+	return nil
+}
+
+func isFinished(ps *ProcessSession) bool {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.Status == "completed" || ps.Status == "failed" || ps.Status == "killed"
 }

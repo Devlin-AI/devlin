@@ -12,6 +12,7 @@ import (
 	"github.com/devlin-ai/devlin/internal/llm"
 	"github.com/devlin-ai/devlin/internal/logger"
 	"github.com/devlin-ai/devlin/internal/message"
+	"github.com/devlin-ai/devlin/internal/process"
 	"github.com/devlin-ai/devlin/internal/prompt"
 	"github.com/devlin-ai/devlin/internal/tool"
 	"github.com/google/uuid"
@@ -330,6 +331,79 @@ func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt str
 	return "", fmt.Errorf("subagent produced no output")
 }
 
+func (s *Session) SpawnSubagentAsync(ctx context.Context, description, taskPrompt string) (string, error) {
+	if s.maxDepth > 0 && s.depth >= s.maxDepth {
+		return "", fmt.Errorf("maximum subagent depth (%d) reached", s.maxDepth)
+	}
+
+	childID := uuid.New().String()
+
+	if err := s.store.CreateSession(childID, s.channel, s.mode); err != nil {
+		return "", fmt.Errorf("create subagent session: %w", err)
+	}
+
+	if err := s.store.CreateBranch(childID, s.id, 0); err != nil {
+		return "", fmt.Errorf("create subagent branch: %w", err)
+	}
+
+	subTools := buildSubagentTools(s.depth+1, s.maxDepth)
+	cwd, _ := os.Getwd()
+	subPrompt := prompt.Build(cwd, subTools)
+
+	subEmitter := NewSubagentEmitter(s.onEvent, s.depth+1, description)
+
+	child := &Session{
+		id:           childID,
+		channel:      s.channel,
+		mode:         s.mode,
+		provider:     s.provider,
+		store:        s.store,
+		model:        s.model,
+		systemPrompt: subPrompt,
+		onEvent:      subEmitter.SendEvent,
+		parentID:     s.id,
+		depth:        s.depth + 1,
+		maxDepth:     s.maxDepth,
+		stallTimeout: s.stallTimeout,
+	}
+	child.emitter = subEmitter
+
+	if _, err := s.store.persistMessage(childID, "tool_defs", string(marshalToolCalls(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
+		logger.L().Error("failed to persist subagent tool_defs", "session_id", childID, "error", err)
+	}
+
+	if _, err := s.store.persistMessage(childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
+		logger.L().Error("failed to persist subagent system_prompt", "session_id", childID, "error", err)
+	}
+
+	onComplete := func(ps *process.ProcessSession) {
+		ps.Result = child.getLastAssistantResponse()
+	}
+
+	runFunc := func(ctx context.Context) (string, error) {
+		child.ProcessMessage(taskPrompt)
+		return child.getLastAssistantResponse(), nil
+	}
+
+	_, err := process.DefaultRegistry.SpawnAgent(description, taskPrompt, runFunc, process.WithOnComplete(onComplete))
+	if err != nil {
+		return "", err
+	}
+
+	return childID, nil
+}
+
+func (s *Session) getLastAssistantResponse() string {
+	s.historyMu.Lock()
+	defer s.historyMu.Unlock()
+	for i := len(s.history) - 1; i >= 0; i-- {
+		if s.history[i].Role == message.RoleAssistant {
+			return s.history[i].Content
+		}
+	}
+	return ""
+}
+
 func buildSubagentTools(depth, maxDepth int) map[string]tool.Tool {
 	all := tool.All()
 	filtered := make(map[string]tool.Tool, len(all))
@@ -499,19 +573,19 @@ func (s *Session) processLoop() {
 					if evt.Usage != nil {
 						streamUsage = evt.Usage
 					}
-			case message.StreamEventToolStart:
-				if evt.ToolID != "" {
-					if len(toolCalls) > 0 {
-						s.emitter.SendToolStart(toolCalls[len(toolCalls)-1])
+				case message.StreamEventToolStart:
+					if evt.ToolID != "" {
+						if len(toolCalls) > 0 {
+							s.emitter.SendToolStart(toolCalls[len(toolCalls)-1])
+						}
+						toolCalls = append(toolCalls, toolCall{
+							ID:   evt.ToolID,
+							Name: evt.ToolName,
+							Args: evt.Token,
+						})
+					} else if len(toolCalls) > 0 {
+						toolCalls[len(toolCalls)-1].Args += evt.Token
 					}
-					toolCalls = append(toolCalls, toolCall{
-						ID:   evt.ToolID,
-						Name: evt.ToolName,
-						Args: evt.Token,
-					})
-				} else if len(toolCalls) > 0 {
-					toolCalls[len(toolCalls)-1].Args += evt.Token
-				}
 				case message.StreamEventError:
 					if ctx.Err() != nil {
 						s.emitter.SendEvent(Event{Type: "cancelled"})

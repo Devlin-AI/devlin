@@ -49,6 +49,7 @@ type ConcurrencySafe interface {
 
 type SessionSpawner interface {
 	SpawnSubagent(ctx context.Context, description, prompt string) (string, error)
+	SpawnSubagentAsync(ctx context.Context, description, prompt string) (string, error)
 	MaxDepth() int
 	Depth() int
 }

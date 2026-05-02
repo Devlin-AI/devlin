@@ -12,13 +12,16 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/devlin-ai/devlin/internal/process"
 )
 
 type BashTool struct{}
 
 type bashParams struct {
-	Command string `json:"command"`
-	Timeout int    `json:"timeout,omitempty"`
+	Command           string `json:"command"`
+	Timeout           int    `json:"timeout,omitempty"`
+	Background        bool   `json:"background,omitempty"`
+	BackgroundTimeout int    `json:"background_timeout,omitempty"`
 }
 
 type bashOutput struct {
@@ -144,6 +147,16 @@ const bashParameters = `{
 		"timeout": {
 			"type": "integer",
 			"description": "Optional timeout in seconds"
+		},
+		"background": {
+			"type": "boolean",
+			"description": "Run in background, return task_id immediately",
+			"default": false
+		},
+		"background_timeout": {
+			"type": "integer",
+			"description": "Auto-background after this many seconds of running. 0 uses global default.",
+			"default": 0
 		}
 	},
 	"required": ["command"]
@@ -298,10 +311,21 @@ func (p bashParams) timeout() time.Duration {
 	return 120 * time.Second
 }
 
+func (p bashParams) bgTimeout() time.Duration {
+	if p.BackgroundTimeout > 0 {
+		return time.Duration(p.BackgroundTimeout) * time.Second
+	}
+	return 0
+}
+
 func (BashTool) StreamingExecute(ctx context.Context, args json.RawMessage, onChunk func(chunk string)) (string, error) {
 	var params bashParams
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", err
+	}
+
+	if params.Background {
+		return executeBackground(params, onChunk)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, params.timeout())
@@ -381,4 +405,33 @@ func (BashTool) StreamingExecute(ctx context.Context, args json.RawMessage, onCh
 
 	out, _ := json.Marshal(result)
 	return string(out), nil
+}
+
+func executeBackground(params bashParams, onChunk func(chunk string)) (string, error) {
+	var bgTimeout time.Duration
+	if params.bgTimeout() > 0 {
+		bgTimeout = params.bgTimeout()
+	} else {
+		bgTimeout = process.DefaultBackgroundTimeout
+	}
+
+	ps, err := process.DefaultRegistry.Spawn(params.Command, onChunk, process.WithAutoBackground(bgTimeout))
+	if err != nil {
+		return "", err
+	}
+
+	result := map[string]interface{}{
+		"task_id": ps.ID,
+		"type":    "bash",
+		"command": ps.Command,
+		"status":  ps.Status,
+		"pid":     ps.PID,
+	}
+	if onChunk == nil {
+		output, _ := process.DefaultRegistry.Read(ps.ID)
+		cleanOutput := stripANSI(output)
+		result["output"] = cleanOutput
+	}
+	b, _ := json.Marshal(result)
+	return string(b), nil
 }

@@ -61,8 +61,9 @@ type Config struct {
 }
 
 type SessionConfig struct {
-	IdleTimeout string `json:"idle_timeout"`
-	MaxDepth    int    `json:"max_depth"`
+	IdleTimeout       string `json:"idle_timeout"`
+	MaxDepth          int    `json:"max_depth"`
+	BackgroundTimeout int    `json:"background_timeout,omitempty"`
 }
 
 type GatewayConfig struct {
@@ -96,6 +97,13 @@ func (c *SessionConfig) IdleTimeoutDuration() time.Duration {
 		return 30 * time.Minute
 	}
 	return d
+}
+
+func (c *SessionConfig) BackgroundTimeoutDuration() time.Duration {
+	if c.BackgroundTimeout <= 0 {
+		return 120 * time.Second
+	}
+	return time.Duration(c.BackgroundTimeout) * time.Second
 }
 
 func Load() (*Config, error) {

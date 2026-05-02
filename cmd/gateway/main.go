@@ -35,6 +35,7 @@ type connState struct {
 	channel      string
 	maxDepth     int
 	stallTimeout time.Duration
+	bgTimeout    time.Duration
 }
 
 func (cs *connState) send(msg channel.OutboundMessage) {
@@ -152,7 +153,10 @@ func main() {
 			model:        modelName,
 			maxDepth:     cfg.Session.MaxDepth,
 			stallTimeout: cfg.LLM.StallTimeoutDuration(),
+			bgTimeout:    cfg.Session.BackgroundTimeoutDuration(),
 		}
+
+		process.SetDefaultBackgroundTimeout(cs.bgTimeout)
 
 		for {
 			_, raw, err := conn.ReadMessage()
