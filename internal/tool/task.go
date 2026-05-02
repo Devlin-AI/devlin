@@ -165,7 +165,6 @@ func executeBatchParallel(ctx context.Context, spawner SessionSpawner, tasks []t
 
 func executeBatchParallelAsync(ctx context.Context, spawner SessionSpawner, tasks []taskItem) (string, error) {
 	var taskList []map[string]interface{}
-	var mu sync.Mutex
 
 	for _, t := range tasks {
 		childID, err := spawner.SpawnSubagentAsync(ctx, t.Description, t.Prompt)
@@ -173,14 +172,12 @@ func executeBatchParallelAsync(ctx context.Context, spawner SessionSpawner, task
 			return "", err
 		}
 
-		mu.Lock()
 		taskList = append(taskList, map[string]interface{}{
 			"task_id":     childID,
 			"type":        "agent",
 			"description": t.Description,
 			"status":      "running",
 		})
-		mu.Unlock()
 	}
 
 	result := map[string]interface{}{

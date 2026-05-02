@@ -48,13 +48,14 @@ type ProcessSession struct {
 	OnChunk     func(string)
 	OnComplete  func(*ProcessSession)
 
-	mu       sync.Mutex
-	cmd      *exec.Cmd
-	ptmx     *os.File
-	done     chan struct{}
-	bgSignal chan struct{}
-	bgTimer  *time.Timer
-	cancel   context.CancelFunc
+	mu        sync.Mutex
+	cmd       *exec.Cmd
+	ptmx      *os.File
+	done      chan struct{}
+	closeOnce sync.Once
+	bgSignal  chan struct{}
+	bgTimer   *time.Timer
+	cancel    context.CancelFunc
 }
 
 type SpawnOption func(*ProcessSession)
@@ -215,7 +216,11 @@ func (r *Registry) runAgent(ps *ProcessSession, ctx context.Context, runFunc fun
 }
 
 func (r *Registry) autoBackground(ps *ProcessSession) {
-	<-ps.bgTimer.C
+	select {
+	case <-ps.bgTimer.C:
+	case <-ps.done:
+		return
+	}
 
 	ps.mu.Lock()
 	if ps.Status != "running" {
@@ -281,7 +286,7 @@ func (r *Registry) finalize(ps *ProcessSession) {
 		ps.bgTimer.Stop()
 	}
 
-	close(ps.done)
+	ps.closeOnce.Do(func() { close(ps.done) })
 
 	if ps.OnComplete != nil {
 		go ps.OnComplete(ps)
@@ -354,9 +359,7 @@ func (r *Registry) Wait(id string, timeout time.Duration) (*ProcessSession, erro
 }
 
 func (r *Registry) Kill(id string) error {
-	r.mu.RLock()
 	ps := r.lookupLive(id)
-	r.mu.RUnlock()
 
 	if ps == nil {
 		return fmt.Errorf("task not found or not running: %s", id)
@@ -379,18 +382,7 @@ func (r *Registry) Kill(id string) error {
 	ps.FinishedAt = time.Now()
 	ps.mu.Unlock()
 
-	r.mu.Lock()
-	delete(r.running, id)
-	delete(r.backgrounded, id)
-	r.finished[id] = ps
-	r.mu.Unlock()
-
-	if ps.ptmx != nil {
-		ps.ptmx.Close()
-	}
-	if ps.bgTimer != nil {
-		ps.bgTimer.Stop()
-	}
+	r.finalize(ps)
 
 	return nil
 }
@@ -435,34 +427,31 @@ func (r *Registry) Cleanup() {
 func KillAll() {
 	r := DefaultRegistry
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
+	all := make([]*ProcessSession, 0, len(r.running)+len(r.backgrounded))
 	for _, ps := range r.running {
-		if ps.Type == TaskTypeBash && ps.cmd != nil && ps.cmd.Process != nil {
-			ps.cmd.Process.Kill()
-		}
-		if ps.cancel != nil {
-			ps.cancel()
-		}
-		if ps.ptmx != nil {
-			ps.ptmx.Close()
-		}
-		ps.Status = "killed"
+		all = append(all, ps)
 	}
 	for _, ps := range r.backgrounded {
-		if ps.Type == TaskTypeBash && ps.cmd != nil && ps.cmd.Process != nil {
-			ps.cmd.Process.Kill()
-		}
-		if ps.cancel != nil {
-			ps.cancel()
-		}
-		if ps.ptmx != nil {
-			ps.ptmx.Close()
-		}
-		ps.Status = "killed"
+		all = append(all, ps)
 	}
 	r.running = make(map[string]*ProcessSession)
 	r.backgrounded = make(map[string]*ProcessSession)
+	r.mu.Unlock()
+
+	for _, ps := range all {
+		if ps.Type == TaskTypeBash && ps.cmd != nil && ps.cmd.Process != nil {
+			ps.cmd.Process.Kill()
+		}
+		if ps.cancel != nil {
+			ps.cancel()
+		}
+		ps.mu.Lock()
+		ps.Status = "killed"
+		ps.FinishedAt = time.Now()
+		ps.mu.Unlock()
+		r.finalize(ps)
+	}
 }
 
 func (r *Registry) lookup(id string) *ProcessSession {
@@ -482,6 +471,8 @@ func (r *Registry) lookup(id string) *ProcessSession {
 }
 
 func (r *Registry) lookupLive(id string) *ProcessSession {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if ps, ok := r.running[id]; ok {
 		return ps
 	}

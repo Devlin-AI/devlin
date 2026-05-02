@@ -427,11 +427,6 @@ func executeBackground(params bashParams, onChunk func(chunk string)) (string, e
 		"status":  ps.Status,
 		"pid":     ps.PID,
 	}
-	if onChunk == nil {
-		output, _ := process.DefaultRegistry.Read(ps.ID)
-		cleanOutput := stripANSI(output)
-		result["output"] = cleanOutput
-	}
 	b, _ := json.Marshal(result)
 	return string(b), nil
 }
