@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/devlin-ai/devlin/internal/channel"
 	"github.com/devlin-ai/devlin/internal/config"
 	"github.com/devlin-ai/devlin/internal/llm"
 	"github.com/devlin-ai/devlin/internal/logger"
+	"github.com/devlin-ai/devlin/internal/process"
 	"github.com/devlin-ai/devlin/internal/session"
 
 	_ "github.com/devlin-ai/devlin/internal/tool"
@@ -353,7 +356,7 @@ func main() {
 					Type:     "session_list",
 					Sessions: infos,
 				})
-				default:
+			default:
 				if !cs.requireSession() {
 					continue
 				}
@@ -363,8 +366,21 @@ func main() {
 	})
 
 	addr := fmt.Sprintf(":%d", cfg.Gateway.Port)
+
+	srv := &http.Server{Addr: addr, Handler: r}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigCh
+		log.Info("shutting down gateway")
+		process.KillAll()
+		srv.Close()
+	}()
+
 	log.Info("gateway starting", "addr", addr)
-	if err := http.ListenAndServe(addr, r); err != nil {
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Error("server exited", "error", err)
 		os.Exit(1)
 	}
