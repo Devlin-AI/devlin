@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/devlin-ai/devlin/internal/logger"
 	"github.com/devlin-ai/devlin/internal/message"
@@ -23,7 +25,7 @@ func buildBaseURL(raw string) string {
 	return strings.TrimRight(raw, "/")
 }
 
-func streamOpenAISSE(ctx context.Context, req *http.Request) (<-chan message.StreamEvent, error) {
+func streamOpenAISSE(ctx context.Context, req *http.Request, stallTimeout time.Duration) (<-chan message.StreamEvent, error) {
 	ch := make(chan message.StreamEvent)
 
 	go func() {
@@ -57,6 +59,40 @@ func streamOpenAISSE(ctx context.Context, req *http.Request) (<-chan message.Str
 			return
 		}
 
+		done := make(chan struct{})
+		defer close(done)
+
+		var lastEventMs atomic.Int64
+		lastEventMs.Store(time.Now().UnixMilli())
+		var stalled atomic.Bool
+
+		if stallTimeout > 0 {
+			go func() {
+				ticker := time.NewTicker(10 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ticker.C:
+						last := time.UnixMilli(lastEventMs.Load())
+						if time.Since(last) > stallTimeout {
+							log.Warn("SSE stream stall detected", "timeout", stallTimeout)
+							stalled.Store(true)
+							resp.Body.Close()
+							return
+						}
+					case <-done:
+						return
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+		}
+
+		updateActivity := func() {
+			lastEventMs.Store(time.Now().UnixMilli())
+		}
+
 		scanner := bufio.NewScanner(resp.Body)
 		var streamUsage *message.Usage
 		for scanner.Scan() {
@@ -72,6 +108,7 @@ func streamOpenAISSE(ctx context.Context, req *http.Request) (<-chan message.Str
 			data := line[6:]
 
 			if data == "[DONE]" {
+				updateActivity()
 				ch <- message.StreamEvent{
 					Type:  message.StreamEventDone,
 					Usage: streamUsage,
@@ -116,6 +153,7 @@ func streamOpenAISSE(ctx context.Context, req *http.Request) (<-chan message.Str
 
 			if len(chunk.Choices[0].Delta.ToolCalls) > 0 {
 				for _, tc := range chunk.Choices[0].Delta.ToolCalls {
+					updateActivity()
 					ch <- message.StreamEvent{
 						Type:     message.StreamEventToolStart,
 						ToolName: tc.Function.Name,
@@ -127,16 +165,26 @@ func streamOpenAISSE(ctx context.Context, req *http.Request) (<-chan message.Str
 			}
 
 			if chunk.Choices[0].Delta.ReasoningContent != "" {
+				updateActivity()
 				ch <- message.StreamEvent{
 					Type:  message.StreamEventThinking,
 					Token: chunk.Choices[0].Delta.ReasoningContent,
 				}
 			}
 			if chunk.Choices[0].Delta.Content != "" {
+				updateActivity()
 				ch <- message.StreamEvent{
 					Type:  message.StreamEventToken,
 					Token: chunk.Choices[0].Delta.Content,
 				}
+			}
+		}
+
+		if stalled.Load() {
+			ch <- message.StreamEvent{
+				Type:       message.StreamEventError,
+				Error:      fmt.Sprintf("stream stalled: no data received for %v", stallTimeout),
+				StatusCode: 999,
 			}
 		}
 	}()

@@ -35,10 +35,11 @@ type Session struct {
 	branchPoint  int64
 	depth        int
 	maxDepth     int
+	stallTimeout time.Duration
 	emitter      EventEmitter
 }
 
-func New(provider llm.Provider, store *Store, ch string, mode string, model string, maxDepth int, onEvent func(Event)) (*Session, error) {
+func New(provider llm.Provider, store *Store, ch string, mode string, model string, maxDepth int, stallTimeout time.Duration, onEvent func(Event)) (*Session, error) {
 	id := uuid.New().String()
 
 	if err := store.CreateSession(id, ch, mode); err != nil {
@@ -58,6 +59,7 @@ func New(provider llm.Provider, store *Store, ch string, mode string, model stri
 		systemPrompt: sysPrompt,
 		onEvent:      onEvent,
 		maxDepth:     maxDepth,
+		stallTimeout: stallTimeout,
 	}
 	s.emitter = s
 
@@ -72,7 +74,7 @@ func New(provider llm.Provider, store *Store, ch string, mode string, model stri
 	return s, nil
 }
 
-func Load(provider llm.Provider, store *Store, sessionID string, model string, maxDepth int, onEvent func(Event)) (*Session, error) {
+func Load(provider llm.Provider, store *Store, sessionID string, model string, maxDepth int, stallTimeout time.Duration, onEvent func(Event)) (*Session, error) {
 	history, err := store.LoadFullHistory(sessionID)
 	if err != nil {
 		return nil, err
@@ -111,6 +113,7 @@ func Load(provider llm.Provider, store *Store, sessionID string, model string, m
 		branchPoint:  branchPoint,
 		depth:        depth,
 		maxDepth:     maxDepth,
+		stallTimeout: stallTimeout,
 	}
 	s.emitter = s
 
@@ -201,6 +204,7 @@ func (s *Session) Branch(msgID int64) (*Session, error) {
 		parentID:     s.id,
 		branchPoint:  msgID,
 		maxDepth:     s.maxDepth,
+		stallTimeout: s.stallTimeout,
 	}
 
 	return branch, nil
@@ -248,6 +252,7 @@ func (s *Session) SwitchTo(sessionID string) (*Session, error) {
 		parentID:     parentID,
 		branchPoint:  branchPoint,
 		maxDepth:     s.maxDepth,
+		stallTimeout: s.stallTimeout,
 	}
 
 	return target, nil
@@ -302,6 +307,7 @@ func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt str
 		parentID:     s.id,
 		depth:        s.depth + 1,
 		maxDepth:     s.maxDepth,
+		stallTimeout: s.stallTimeout,
 	}
 	child.emitter = subEmitter
 
@@ -389,6 +395,8 @@ func (s *Session) SendToolStart(tc toolCall) {
 }
 
 const maxProviderRetries = 8
+const maxStallRetries = 3
+const stallStatusCode = 999
 
 func isRetryableStatus(code int) bool {
 	return code == 429 || code == 500 || code == 502 || code == 503
@@ -437,6 +445,9 @@ func (s *Session) processLoop() {
 		var streamErr error
 		var streamUsage *message.Usage
 
+		var stallRetries int
+
+	attemptLoop:
 		for attempt := 0; attempt <= maxProviderRetries; attempt++ {
 			if attempt > 0 {
 				s.emitter.SendEvent(Event{Type: "status", Content: fmt.Sprintf("Retrying... attempt %d/%d", attempt, maxProviderRetries)})
@@ -453,7 +464,7 @@ func (s *Session) processLoop() {
 				return
 			}
 
-			ch, err := s.provider.Stream(ctx, messages, toolDefs)
+			ch, err := s.provider.Stream(ctx, messages, toolDefs, llm.StreamOptions{StallTimeout: s.stallTimeout})
 			if err != nil {
 				if ctx.Err() != nil {
 					s.emitter.SendEvent(Event{Type: "cancelled"})
@@ -473,14 +484,17 @@ func (s *Session) processLoop() {
 			streamUsage = nil
 
 			var retryNeeded bool
+			var tokensReceived bool
 			for evt := range ch {
 				switch evt.Type {
 				case message.StreamEventToken:
 					assistantText += evt.Token
 					s.emitter.SendEvent(Event{Type: "token", Content: evt.Token})
+					tokensReceived = true
 				case message.StreamEventThinking:
 					thinkingText += evt.Token
 					s.emitter.SendEvent(Event{Type: "thinking", Content: evt.Token})
+					tokensReceived = true
 				case message.StreamEventDone:
 					if evt.Usage != nil {
 						streamUsage = evt.Usage
@@ -504,6 +518,33 @@ func (s *Session) processLoop() {
 						s.history = s.history[:len(s.history)-1]
 						s.setCancel(nil)
 						return
+					}
+					if evt.StatusCode == stallStatusCode {
+						if !tokensReceived && stallRetries < maxStallRetries {
+							stallRetries++
+							logger.L().Warn("stream stall, retrying", "attempt", stallRetries, "max", maxStallRetries)
+							s.emitter.SendEvent(Event{Type: "status", Content: fmt.Sprintf("Stream stalled, retrying... attempt %d/%d", stallRetries, maxStallRetries)})
+							select {
+							case <-ctx.Done():
+							case <-time.After(retryBackoff(stallRetries - 1)):
+							}
+							attempt = -1
+							continue attemptLoop
+						}
+						if tokensReceived {
+							logger.L().Warn("stream stall with partial content")
+							assistantText += "\n\n[Warning: Stream stalled — returning partial response]"
+							if len(toolCalls) > 0 {
+								assistantText += fmt.Sprintf(" (%d tool call(s) dropped)", len(toolCalls))
+								toolCalls = nil
+							}
+						} else {
+							logger.L().Error("stream stall retries exhausted", "retries", maxStallRetries)
+							s.emitter.SendEvent(Event{Type: "error", Content: "Stream stalled repeatedly with no response"})
+							s.setCancel(nil)
+							return
+						}
+						break
 					}
 					if evt.StatusCode != 0 && isRetryableStatus(evt.StatusCode) && attempt < maxProviderRetries {
 						logger.L().Warn("retryable provider error", "status", evt.StatusCode, "attempt", attempt+1, "max", maxProviderRetries)

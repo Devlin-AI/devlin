@@ -70,13 +70,21 @@ type GatewayConfig struct {
 }
 
 type LLMConfig struct {
-	Providers map[string]LLMProviderConfig `json:"providers"`
-	Model     string                       `json:"model"`
+	Providers    map[string]LLMProviderConfig `json:"providers"`
+	Model        string                       `json:"model"`
+	StallTimeout int                          `json:"stall_timeout,omitempty"`
 }
 
 type LLMProviderConfig struct {
 	APIKey  string `json:"api_key"`
 	BaseURL string `json:"base_url,omitempty"`
+}
+
+func (c *LLMConfig) StallTimeoutDuration() time.Duration {
+	if c.StallTimeout <= 0 {
+		return 60 * time.Second
+	}
+	return time.Duration(c.StallTimeout) * time.Second
 }
 
 func (c *SessionConfig) IdleTimeoutDuration() time.Duration {

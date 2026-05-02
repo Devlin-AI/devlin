@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/devlin-ai/devlin/internal/channel"
 	"github.com/devlin-ai/devlin/internal/config"
@@ -22,14 +23,15 @@ import (
 )
 
 type connState struct {
-	conn     *websocket.Conn
-	writeMu  sync.Mutex
-	sess     *session.Session
-	store    *session.Store
-	provider llm.Provider
-	model    string
-	channel  string
-	maxDepth int
+	conn         *websocket.Conn
+	writeMu      sync.Mutex
+	sess         *session.Session
+	store        *session.Store
+	provider     llm.Provider
+	model        string
+	channel      string
+	maxDepth     int
+	stallTimeout time.Duration
 }
 
 func (cs *connState) send(msg channel.OutboundMessage) {
@@ -45,7 +47,7 @@ func makeOnEvent(cs *connState) func(session.Event) {
 }
 
 func (cs *connState) handleNew(msg channel.InboundMessage) {
-	sess, err := session.New(cs.provider, cs.store, msg.Channel, msg.Mode, cs.model, cs.maxDepth, makeOnEvent(cs))
+	sess, err := session.New(cs.provider, cs.store, msg.Channel, msg.Mode, cs.model, cs.maxDepth, cs.stallTimeout, makeOnEvent(cs))
 	if err != nil {
 		logger.L().Error("failed to create session", "error", err)
 		cs.send(channel.OutboundMessage{Type: "error", Content: err.Error()})
@@ -73,7 +75,7 @@ func (cs *connState) handleContinue(msg channel.InboundMessage) {
 		return
 	}
 
-	sess, err := session.Load(cs.provider, cs.store, lastID, cs.model, cs.maxDepth, makeOnEvent(cs))
+	sess, err := session.Load(cs.provider, cs.store, lastID, cs.model, cs.maxDepth, cs.stallTimeout, makeOnEvent(cs))
 	if err != nil {
 		logger.L().Error("failed to load session", "error", err)
 		cs.send(channel.OutboundMessage{Type: "error", Content: err.Error()})
@@ -141,11 +143,12 @@ func main() {
 		defer conn.Close()
 
 		cs := &connState{
-			conn:     conn,
-			store:    store,
-			provider: provider,
-			model:    modelName,
-			maxDepth: cfg.Session.MaxDepth,
+			conn:         conn,
+			store:        store,
+			provider:     provider,
+			model:        modelName,
+			maxDepth:     cfg.Session.MaxDepth,
+			stallTimeout: cfg.LLM.StallTimeoutDuration(),
 		}
 
 		for {

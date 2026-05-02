@@ -32,7 +32,7 @@ func (z *ZaiProvider) Name() string {
 	return "Zai"
 }
 
-func (z *ZaiProvider) Stream(ctx context.Context, messages []message.Message, tools []message.ToolDef) (<-chan message.StreamEvent, error) {
+func (z *ZaiProvider) Stream(ctx context.Context, messages []message.Message, tools []message.ToolDef, opts StreamOptions) (<-chan message.StreamEvent, error) {
 	apiMessages := make([]interface{}, len(messages))
 	for i, msg := range messages {
 		m := map[string]interface{}{
@@ -74,7 +74,7 @@ func (z *ZaiProvider) Stream(ctx context.Context, messages []message.Message, to
 	req.Header.Set("Authorization", "Bearer "+z.apiKey)
 	req.Header.Set("User-Agent", userAgent)
 
-	return streamOpenAISSE(ctx, req)
+	return streamOpenAISSE(ctx, req, opts.StallTimeout)
 }
 
 func init() {

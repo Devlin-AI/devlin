@@ -27,7 +27,7 @@ func (p *LlamaCppProvider) Name() string {
 	return "LlamaCpp"
 }
 
-func (p *LlamaCppProvider) Stream(ctx context.Context, messages []message.Message, tools []message.ToolDef) (<-chan message.StreamEvent, error) {
+func (p *LlamaCppProvider) Stream(ctx context.Context, messages []message.Message, tools []message.ToolDef, opts StreamOptions) (<-chan message.StreamEvent, error) {
 	body := map[string]interface{}{
 		"model":    p.model,
 		"messages": messages,
@@ -53,7 +53,7 @@ func (p *LlamaCppProvider) Stream(ctx context.Context, messages []message.Messag
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
 
-	return streamOpenAISSE(ctx, req)
+	return streamOpenAISSE(ctx, req, opts.StallTimeout)
 }
 
 func init() {
