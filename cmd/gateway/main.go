@@ -20,15 +20,14 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-func main() {
+func setupGateway() (llm.Provider, *session.Store, string, int, error) {
 	logger.Init()
-
 	log := logger.L()
 
 	cfg, err := config.Load()
 	if err != nil {
 		log.Error("failed to load config", "error", err)
-		os.Exit(1)
+		return nil, nil, "", 0, err
 	}
 
 	parts := strings.SplitN(cfg.LLM.Model, "/", 2)
@@ -38,13 +37,13 @@ func main() {
 	providerCfg, ok := cfg.LLM.Providers[providerName]
 	if !ok {
 		log.Error("provider not found", "provider", providerName)
-		os.Exit(1)
+		return nil, nil, "", 0, fmt.Errorf("provider %q not found", providerName)
 	}
 
 	provider, err := llm.NewProvider(providerName, providerCfg.APIKey, modelName, providerCfg.BaseURL)
 	if err != nil {
 		log.Error("failed to create provider", "provider", providerName, "error", err)
-		os.Exit(1)
+		return nil, nil, "", 0, err
 	}
 
 	home, _ := os.UserHomeDir()
@@ -52,13 +51,22 @@ func main() {
 	store, err := session.NewStore(dbPath)
 	if err != nil {
 		log.Error("failed to open store", "error", err)
-		os.Exit(1)
+		return nil, nil, "", 0, err
 	}
-	defer store.Close()
 
 	llm.SetDefaultStallTimeout(cfg.LLM.StallTimeoutDuration())
 	process.SetDefaultBackgroundTimeout(cfg.Session.BackgroundTimeoutDuration())
 	session.SetDefaultMaxDepth(cfg.Session.MaxDepth)
+
+	return provider, store, modelName, cfg.Gateway.Port, nil
+}
+
+func main() {
+	provider, store, modelName, port, err := setupGateway()
+	if err != nil {
+		os.Exit(1)
+	}
+	defer store.Close()
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -67,7 +75,7 @@ func main() {
 	r.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			log.Error("websocket upgrade failed", "error", err)
+			logger.L().Error("websocket upgrade failed", "error", err)
 			return
 		}
 		defer conn.Close()
@@ -82,7 +90,7 @@ func main() {
 		cs.handleConnection()
 	})
 
-	addr := fmt.Sprintf(":%d", cfg.Gateway.Port)
+	addr := fmt.Sprintf(":%d", port)
 
 	srv := &http.Server{Addr: addr, Handler: r}
 
@@ -91,14 +99,14 @@ func main() {
 
 	go func() {
 		<-sigCh
-		log.Info("shutting down gateway")
+		logger.L().Info("shutting down gateway")
 		process.KillAll()
 		srv.Close()
 	}()
 
-	log.Info("gateway starting", "addr", addr)
+	logger.L().Info("gateway starting", "addr", addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Error("server exited", "error", err)
+		logger.L().Error("server exited", "error", err)
 		os.Exit(1)
 	}
 }
