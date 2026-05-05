@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/devlin-ai/devlin/internal/channel"
 	"github.com/devlin-ai/devlin/internal/config"
@@ -26,16 +25,13 @@ import (
 )
 
 type connState struct {
-	conn         *websocket.Conn
-	writeMu      sync.Mutex
-	sess         *session.Session
-	store        *session.Store
-	provider     llm.Provider
-	model        string
-	channel      string
-	maxDepth     int
-	stallTimeout time.Duration
-	bgTimeout    time.Duration
+	conn     *websocket.Conn
+	writeMu  sync.Mutex
+	sess     *session.Session
+	store    *session.Store
+	provider llm.Provider
+	model    string
+	channel  string
 }
 
 func (cs *connState) send(msg channel.OutboundMessage) {
@@ -51,7 +47,7 @@ func makeOnEvent(cs *connState) func(session.Event) {
 }
 
 func (cs *connState) handleNew(msg channel.InboundMessage) {
-	sess, err := session.New(cs.provider, cs.store, msg.Channel, msg.Mode, cs.model, cs.maxDepth, cs.stallTimeout, makeOnEvent(cs))
+	sess, err := session.New(cs.provider, cs.store, msg.Channel, msg.Mode, cs.model, makeOnEvent(cs))
 	if err != nil {
 		logger.L().Error("failed to create session", "error", err)
 		cs.send(channel.OutboundMessage{Type: "error", Content: err.Error()})
@@ -79,7 +75,7 @@ func (cs *connState) handleContinue(msg channel.InboundMessage) {
 		return
 	}
 
-	sess, err := session.Load(cs.provider, cs.store, lastID, cs.model, cs.maxDepth, cs.stallTimeout, makeOnEvent(cs))
+	sess, err := session.Load(cs.provider, cs.store, lastID, cs.model, makeOnEvent(cs))
 	if err != nil {
 		logger.L().Error("failed to load session", "error", err)
 		cs.send(channel.OutboundMessage{Type: "error", Content: err.Error()})
@@ -134,6 +130,10 @@ func main() {
 	}
 	defer store.Close()
 
+	llm.SetDefaultStallTimeout(cfg.LLM.StallTimeoutDuration())
+	process.SetDefaultBackgroundTimeout(cfg.Session.BackgroundTimeoutDuration())
+	session.SetDefaultMaxDepth(cfg.Session.MaxDepth)
+
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
@@ -147,16 +147,11 @@ func main() {
 		defer conn.Close()
 
 		cs := &connState{
-			conn:         conn,
-			store:        store,
-			provider:     provider,
-			model:        modelName,
-			maxDepth:     cfg.Session.MaxDepth,
-			stallTimeout: cfg.LLM.StallTimeoutDuration(),
-			bgTimeout:    cfg.Session.BackgroundTimeoutDuration(),
+			conn:     conn,
+			store:    store,
+			provider: provider,
+			model:    modelName,
 		}
-
-		process.SetDefaultBackgroundTimeout(cs.bgTimeout)
 
 		for {
 			_, raw, err := conn.ReadMessage()

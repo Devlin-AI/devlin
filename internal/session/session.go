@@ -18,6 +18,12 @@ import (
 	"github.com/google/uuid"
 )
 
+var defaultMaxDepth int
+
+func SetDefaultMaxDepth(d int) {
+	defaultMaxDepth = d
+}
+
 type Session struct {
 	id           string
 	channel      string
@@ -34,13 +40,12 @@ type Session struct {
 	cancel       context.CancelFunc
 	parentID     string
 	branchPoint  int64
-	depth        int
-	maxDepth     int
-	stallTimeout time.Duration
-	emitter      EventEmitter
+	depth     int
+	emitter   EventEmitter
+	parentCtx    context.Context
 }
 
-func New(provider llm.Provider, store *Store, ch string, mode string, model string, maxDepth int, stallTimeout time.Duration, onEvent func(Event)) (*Session, error) {
+func New(provider llm.Provider, store *Store, ch string, mode string, model string, onEvent func(Event)) (*Session, error) {
 	id := uuid.New().String()
 
 	if err := store.CreateSession(id, ch, mode); err != nil {
@@ -59,8 +64,6 @@ func New(provider llm.Provider, store *Store, ch string, mode string, model stri
 		model:        model,
 		systemPrompt: sysPrompt,
 		onEvent:      onEvent,
-		maxDepth:     maxDepth,
-		stallTimeout: stallTimeout,
 	}
 	s.emitter = s
 
@@ -75,7 +78,7 @@ func New(provider llm.Provider, store *Store, ch string, mode string, model stri
 	return s, nil
 }
 
-func Load(provider llm.Provider, store *Store, sessionID string, model string, maxDepth int, stallTimeout time.Duration, onEvent func(Event)) (*Session, error) {
+func Load(provider llm.Provider, store *Store, sessionID string, model string, onEvent func(Event)) (*Session, error) {
 	history, err := store.LoadFullHistory(sessionID)
 	if err != nil {
 		return nil, err
@@ -112,9 +115,7 @@ func Load(provider llm.Provider, store *Store, sessionID string, model string, m
 		onEvent:      onEvent,
 		parentID:     parentID,
 		branchPoint:  branchPoint,
-		depth:        depth,
-		maxDepth:     maxDepth,
-		stallTimeout: stallTimeout,
+		depth:    depth,
 	}
 	s.emitter = s
 
@@ -202,10 +203,8 @@ func (s *Session) Branch(msgID int64) (*Session, error) {
 		history:      historyCopy,
 		systemPrompt: s.systemPrompt,
 		onEvent:      s.onEvent,
-		parentID:     s.id,
-		branchPoint:  msgID,
-		maxDepth:     s.maxDepth,
-		stallTimeout: s.stallTimeout,
+		parentID:    s.id,
+		branchPoint: msgID,
 	}
 
 	return branch, nil
@@ -250,10 +249,8 @@ func (s *Session) SwitchTo(sessionID string) (*Session, error) {
 		history:      history,
 		systemPrompt: s.systemPrompt,
 		onEvent:      s.onEvent,
-		parentID:     parentID,
-		branchPoint:  branchPoint,
-		maxDepth:     s.maxDepth,
-		stallTimeout: s.stallTimeout,
+		parentID:    parentID,
+		branchPoint: branchPoint,
 	}
 
 	return target, nil
@@ -268,7 +265,7 @@ func (s *Session) GetParentBranch() (*BranchMeta, error) {
 }
 
 func (s *Session) MaxDepth() int {
-	return s.maxDepth
+	return defaultMaxDepth
 }
 
 func (s *Session) Depth() int {
@@ -276,8 +273,8 @@ func (s *Session) Depth() int {
 }
 
 func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt string) (string, error) {
-	if s.maxDepth > 0 && s.depth >= s.maxDepth {
-		return "", fmt.Errorf("maximum subagent depth (%d) reached", s.maxDepth)
+	if defaultMaxDepth > 0 && s.depth >= defaultMaxDepth {
+		return "", fmt.Errorf("maximum subagent depth (%d) reached", defaultMaxDepth)
 	}
 
 	childID := uuid.New().String()
@@ -290,7 +287,7 @@ func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt str
 		return "", fmt.Errorf("create subagent branch: %w", err)
 	}
 
-	subTools := buildSubagentTools(s.depth+1, s.maxDepth)
+	subTools := buildSubagentTools(s.depth + 1)
 	cwd, _ := os.Getwd()
 	subPrompt := prompt.Build(cwd, subTools)
 
@@ -307,8 +304,7 @@ func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt str
 		onEvent:      subEmitter.SendEvent,
 		parentID:     s.id,
 		depth:        s.depth + 1,
-		maxDepth:     s.maxDepth,
-		stallTimeout: s.stallTimeout,
+		parentCtx:    ctx,
 	}
 	child.emitter = subEmitter
 
@@ -332,8 +328,8 @@ func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt str
 }
 
 func (s *Session) SpawnSubagentAsync(ctx context.Context, description, taskPrompt string) (string, error) {
-	if s.maxDepth > 0 && s.depth >= s.maxDepth {
-		return "", fmt.Errorf("maximum subagent depth (%d) reached", s.maxDepth)
+	if defaultMaxDepth > 0 && s.depth >= defaultMaxDepth {
+		return "", fmt.Errorf("maximum subagent depth (%d) reached", defaultMaxDepth)
 	}
 
 	childID := uuid.New().String()
@@ -346,7 +342,7 @@ func (s *Session) SpawnSubagentAsync(ctx context.Context, description, taskPromp
 		return "", fmt.Errorf("create subagent branch: %w", err)
 	}
 
-	subTools := buildSubagentTools(s.depth+1, s.maxDepth)
+	subTools := buildSubagentTools(s.depth + 1)
 	cwd, _ := os.Getwd()
 	subPrompt := prompt.Build(cwd, subTools)
 
@@ -363,8 +359,6 @@ func (s *Session) SpawnSubagentAsync(ctx context.Context, description, taskPromp
 		onEvent:      subEmitter.SendEvent,
 		parentID:     s.id,
 		depth:        s.depth + 1,
-		maxDepth:     s.maxDepth,
-		stallTimeout: s.stallTimeout,
 	}
 	child.emitter = subEmitter
 
@@ -381,6 +375,7 @@ func (s *Session) SpawnSubagentAsync(ctx context.Context, description, taskPromp
 	}
 
 	runFunc := func(ctx context.Context) (string, error) {
+		child.parentCtx = ctx
 		child.ProcessMessage(taskPrompt)
 		return child.getLastAssistantResponse(), nil
 	}
@@ -404,11 +399,11 @@ func (s *Session) getLastAssistantResponse() string {
 	return ""
 }
 
-func buildSubagentTools(depth, maxDepth int) map[string]tool.Tool {
+func buildSubagentTools(depth int) map[string]tool.Tool {
 	all := tool.All()
 	filtered := make(map[string]tool.Tool, len(all))
 	for name, t := range all {
-		if name == "task" && maxDepth > 0 && depth >= maxDepth {
+		if name == "task" && defaultMaxDepth > 0 && depth >= defaultMaxDepth {
 			continue
 		}
 		filtered[name] = t
@@ -487,7 +482,11 @@ func retryBackoff(attempt int) time.Duration {
 }
 
 func (s *Session) processLoop() {
-	ctx := tool.ContextWithSpawner(context.Background(), s)
+	parentCtx := s.parentCtx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx := tool.ContextWithSpawner(parentCtx, s)
 	toolDefs := buildToolDefs()
 
 	for {
@@ -538,7 +537,7 @@ func (s *Session) processLoop() {
 				return
 			}
 
-			ch, err := s.provider.Stream(ctx, messages, toolDefs, llm.StreamOptions{StallTimeout: s.stallTimeout})
+			ch, err := s.provider.Stream(ctx, messages, toolDefs)
 			if err != nil {
 				if ctx.Err() != nil {
 					s.emitter.SendEvent(Event{Type: "cancelled"})

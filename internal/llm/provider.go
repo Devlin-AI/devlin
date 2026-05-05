@@ -7,11 +7,15 @@ import (
 	"github.com/devlin-ai/devlin/internal/message"
 )
 
-type StreamOptions struct {
-	StallTimeout time.Duration
+const defaultStallTimeout = 60 * time.Second
+
+var DefaultStallTimeout = defaultStallTimeout
+
+func SetDefaultStallTimeout(d time.Duration) {
+	DefaultStallTimeout = d
 }
 
 type Provider interface {
 	Name() string
-	Stream(ctx context.Context, messages []message.Message, tools []message.ToolDef, opts StreamOptions) (<-chan message.StreamEvent, error)
+	Stream(ctx context.Context, messages []message.Message, tools []message.ToolDef) (<-chan message.StreamEvent, error)
 }
