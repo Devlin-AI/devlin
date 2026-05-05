@@ -267,6 +267,42 @@ func (cs *connState) handleHistory(msg channel.InboundMessage) {
 	})
 }
 
+func (cs *connState) handleConnection() {
+	for {
+		_, raw, err := cs.conn.ReadMessage()
+		if err != nil {
+			return
+		}
+
+		var msg channel.InboundMessage
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			continue
+		}
+
+		switch msg.Type {
+		case "new":
+			cs.handleNew(msg)
+		case "continue":
+			cs.handleContinue(msg)
+		case "cancel":
+			cs.handleCancel(msg)
+		case "branch":
+			cs.handleBranch(msg)
+		case "switch_session":
+			cs.handleSwitchSession(msg)
+		case "session_state":
+			cs.handleHistory(msg)
+		case "list_sessions":
+			cs.handleListSessions(msg)
+		default:
+			if !cs.requireSession() {
+				continue
+			}
+			go cs.sess.ProcessMessage(msg.Content)
+		}
+	}
+}
+
 func (cs *connState) requireSession() bool {
 	return cs.sess != nil
 }

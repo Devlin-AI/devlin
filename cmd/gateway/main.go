@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -10,7 +9,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/devlin-ai/devlin/internal/channel"
 	"github.com/devlin-ai/devlin/internal/config"
 	"github.com/devlin-ai/devlin/internal/llm"
 	"github.com/devlin-ai/devlin/internal/logger"
@@ -81,39 +79,7 @@ func main() {
 			model:    modelName,
 		}
 
-		for {
-			_, raw, err := conn.ReadMessage()
-			if err != nil {
-				return
-			}
-
-			var msg channel.InboundMessage
-			if err := json.Unmarshal(raw, &msg); err != nil {
-				continue
-			}
-
-			switch msg.Type {
-			case "new":
-				cs.handleNew(msg)
-			case "continue":
-				cs.handleContinue(msg)
-			case "cancel":
-				cs.handleCancel(msg)
-			case "branch":
-				cs.handleBranch(msg)
-			case "switch_session":
-				cs.handleSwitchSession(msg)
-			case "session_state":
-				cs.handleHistory(msg)
-			case "list_sessions":
-				cs.handleListSessions(msg)
-			default:
-				if !cs.requireSession() {
-					continue
-				}
-				go cs.sess.ProcessMessage(msg.Content)
-			}
-		}
+		cs.handleConnection()
 	})
 
 	addr := fmt.Sprintf(":%d", cfg.Gateway.Port)
