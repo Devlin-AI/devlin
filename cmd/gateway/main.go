@@ -61,6 +61,27 @@ func setupGateway() (llm.Provider, *session.Store, string, int, error) {
 	return provider, store, modelName, cfg.Gateway.Port, nil
 }
 
+func runServer(r *chi.Mux, port int) {
+	addr := fmt.Sprintf(":%d", port)
+	srv := &http.Server{Addr: addr, Handler: r}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigCh
+		logger.L().Info("shutting down gateway")
+		process.KillAll()
+		srv.Close()
+	}()
+
+	logger.L().Info("gateway starting", "addr", addr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		logger.L().Error("server exited", "error", err)
+		os.Exit(1)
+	}
+}
+
 func main() {
 	provider, store, modelName, port, err := setupGateway()
 	if err != nil {
@@ -90,23 +111,5 @@ func main() {
 		cs.handleConnection()
 	})
 
-	addr := fmt.Sprintf(":%d", port)
-
-	srv := &http.Server{Addr: addr, Handler: r}
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		<-sigCh
-		logger.L().Info("shutting down gateway")
-		process.KillAll()
-		srv.Close()
-	}()
-
-	logger.L().Info("gateway starting", "addr", addr)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		logger.L().Error("server exited", "error", err)
-		os.Exit(1)
-	}
+	runServer(r, port)
 }
