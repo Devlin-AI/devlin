@@ -120,12 +120,15 @@ func Load(provider llm.Provider, db *store.Store, sessionID string, model string
 	}
 	s.emitter = s
 
-	channel, mode, err := db.GetChannelMode(sessionID)
+	sess, err := db.GetSession(sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("load session channel/mode: %w", err)
+		return nil, fmt.Errorf("load session meta: %w", err)
 	}
-	s.channel = channel
-	s.mode = mode
+	if sess == nil {
+		return nil, fmt.Errorf("session not found: %s", sessionID)
+	}
+	s.channel = sess.Channel
+	s.mode = sess.Mode
 
 	return s, nil
 }

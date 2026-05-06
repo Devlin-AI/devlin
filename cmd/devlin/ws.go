@@ -95,7 +95,7 @@ func sendNew(conn *websocket.Conn) tea.Cmd {
 		err := conn.WriteJSON(channel.InboundMessage{
 			Type:    "new",
 			Channel: "tui",
-			Mode:    "agentic",
+			Mode:    channel.ModeCoding,
 		})
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}

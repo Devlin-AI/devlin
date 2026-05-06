@@ -18,7 +18,7 @@ func (r *repo) migrate() error {
 		CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY,
 			channel TEXT NOT NULL,
-			mode TEXT NOT NULL DEFAULT 'agentic',
+			mode TEXT NOT NULL DEFAULT 'coding',
 			created_at REAL NOT NULL,
 			updated_at REAL NOT NULL
 		);
@@ -50,7 +50,7 @@ func (r *repo) migrate() error {
 	}
 
 	r.db.Exec("ALTER TABLE sessions RENAME COLUMN platform TO channel")
-	r.db.Exec("ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'agentic'")
+	r.db.Exec("ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'coding'")
 
 	return nil
 }

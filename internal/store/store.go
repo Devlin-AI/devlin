@@ -106,15 +106,12 @@ func (s *Store) GetLastSession(channel, mode string) (string, error) {
 	return sessions[0].ID, nil
 }
 
-func (s *Store) GetChannelMode(sessionID string) (string, string, error) {
-	sess, err := s.r.getSession(sessionID)
+func (s *Store) GetSession(id string) (*SessionMeta, error) {
+	sess, err := s.r.getSession(id)
 	if err != nil {
-		return "", "", fmt.Errorf("get channel/mode: %w", err)
+		return nil, fmt.Errorf("get session: %w", err)
 	}
-	if sess == nil {
-		return "", "", nil
-	}
-	return sess.Channel, sess.Mode, nil
+	return sess, nil
 }
 
 func (s *Store) ListSessions(channel string) ([]SessionMeta, error) {

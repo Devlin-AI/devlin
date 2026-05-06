@@ -1,5 +1,10 @@
 package channel
 
+const (
+	ModeAssistant = "assistant"
+	ModeCoding    = "coding"
+)
+
 type InboundMessage struct {
 	Type      string `json:"type"`
 	Content   string `json:"content"`
