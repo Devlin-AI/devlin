@@ -14,7 +14,7 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	r *repo
 }
 
 type BranchMeta struct {
@@ -36,172 +36,106 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := openDB(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("open db: %w", err)
+		return nil, err
 	}
 
-	db.SetMaxOpenConns(1)
-
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
-	}
-
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
-	}
-
-	s := &Store{db: db}
-	if err := s.migrate(); err != nil {
+	r := &repo{db: db}
+	if err := r.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
-	return s, nil
+	return &Store{r: r}, nil
+}
+
+func openDB(dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set WAL mode: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
+	}
+	return db, nil
 }
 
 func (s *Store) Close() error {
-	return s.db.Close()
-}
-
-func (s *Store) migrate() error {
-	_, err := s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS sessions (
-			id TEXT PRIMARY KEY,
-			channel TEXT NOT NULL,
-			mode TEXT NOT NULL DEFAULT 'agentic',
-			created_at REAL NOT NULL,
-			updated_at REAL NOT NULL
-		);
-
-		CREATE TABLE IF NOT EXISTS messages (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL REFERENCES sessions(id),
-			role TEXT NOT NULL,
-			content TEXT,
-			tool_calls TEXT,
-			tool_call_id TEXT,
-			tool_name TEXT,
-			thinking TEXT,
-			model TEXT,
-			usage TEXT,
-			timestamp REAL NOT NULL
-		);
-
-		CREATE TABLE IF NOT EXISTS branches (
-			session_id    TEXT PRIMARY KEY REFERENCES sessions(id),
-			parent_id     TEXT REFERENCES sessions(id),
-			parent_msg_id INTEGER REFERENCES messages(id)
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
-	`)
-	if err != nil {
-		return err
-	}
-
-	s.db.Exec("ALTER TABLE sessions RENAME COLUMN platform TO channel")
-	s.db.Exec("ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'agentic'")
-
-	return nil
+	return s.r.db.Close()
 }
 
 func (s *Store) CreateSession(id, channel, mode string) error {
 	now := time.Now().Unix()
-	_, err := s.db.Exec(
-		"INSERT INTO sessions (id, channel, mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-		id, channel, mode, now, now,
-	)
-	if err != nil {
-		return fmt.Errorf("create session: %w", err)
-	}
-	return nil
+	return s.r.insertSession(&SessionMeta{
+		ID:        id,
+		Channel:   channel,
+		Mode:      mode,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
 }
 
 func (s *Store) TouchSession(id string) error {
 	now := time.Now().Unix()
-	_, err := s.db.Exec("UPDATE sessions SET updated_at = ? WHERE id = ?", now, id)
-	if err != nil {
-		return fmt.Errorf("touch session: %w", err)
-	}
-	return nil
+	return s.r.updateSession(id, map[string]any{"updated_at": now})
 }
 
 func (s *Store) SessionExists(id string) (bool, error) {
-	var exists bool
-	err := s.db.QueryRow("SELECT 1 FROM sessions WHERE id = ?", id).Scan(&exists)
-	if err == sql.ErrNoRows {
-		return false, nil
+	sess, err := s.r.getSession(id)
+	if err != nil {
+		return false, err
 	}
-	return exists, err
+	return sess != nil, nil
 }
 
 func (s *Store) GetLastSession(channel, mode string) (string, error) {
-	var id string
-	err := s.db.QueryRow(
-		"SELECT id FROM sessions WHERE channel = ? AND mode = ? ORDER BY updated_at DESC LIMIT 1",
-		channel, mode,
-	).Scan(&id)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
+	sessions, err := s.r.findSessions(channel, mode, 1)
 	if err != nil {
 		return "", fmt.Errorf("get last session: %w", err)
 	}
-	return id, nil
+	if len(sessions) == 0 {
+		return "", nil
+	}
+	return sessions[0].ID, nil
 }
 
 func (s *Store) GetChannelMode(sessionID string) (string, string, error) {
-	var channel, mode string
-	err := s.db.QueryRow("SELECT channel, mode FROM sessions WHERE id = ?", sessionID).Scan(&channel, &mode)
+	sess, err := s.r.getSession(sessionID)
 	if err != nil {
 		return "", "", fmt.Errorf("get channel/mode: %w", err)
 	}
-	return channel, mode, nil
+	if sess == nil {
+		return "", "", nil
+	}
+	return sess.Channel, sess.Mode, nil
 }
 
 func (s *Store) ListSessions(channel string) ([]SessionMeta, error) {
-	rows, err := s.db.Query(
-		"SELECT id, channel, mode, created_at, updated_at FROM sessions WHERE channel = ? ORDER BY updated_at DESC",
-		channel,
-	)
+	sessions, err := s.r.findSessions(channel, "", 0)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}
-	defer rows.Close()
-
-	var sessions []SessionMeta
-	for rows.Next() {
-		var sm SessionMeta
-		if err := rows.Scan(&sm.ID, &sm.Channel, &sm.Mode, &sm.CreatedAt, &sm.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan session: %w", err)
-		}
-		sessions = append(sessions, sm)
-	}
-	return sessions, rows.Err()
+	return sessions, nil
 }
 
 func (s *Store) InsertMessage(sessionID string, role string, content string, toolCalls []byte, toolCallID string, toolName string, thinking string, model string, usage []byte, ts float64) (int64, error) {
-	result, err := s.db.Exec(
-		`INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, tool_name, thinking, model, usage, timestamp)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sessionID, role, content, toolCalls, toolCallID, toolName, thinking, model, usage, ts,
-	)
+	id, err := s.r.insertMessage(sessionID, role, content, toolCalls, toolCallID, toolName, thinking, model, usage, ts)
 	if err != nil {
 		return 0, fmt.Errorf("insert message: %w", err)
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("last insert id: %w", err)
 	}
 	return id, nil
 }
 
 func (s *Store) PersistMessage(sessionID string, role string, content string, toolCallsJSON []byte, toolCallID string, toolName string, thinking string, model string, usageJSON []byte) (int64, error) {
 	ts := float64(time.Now().UnixNano()) / 1e9
-	id, err := s.InsertMessage(sessionID, role, content, toolCallsJSON, toolCallID, toolName, thinking, model, usageJSON, ts)
+	id, err := s.r.insertMessage(sessionID, role, content, toolCallsJSON, toolCallID, toolName, thinking, model, usageJSON, ts)
 	if err != nil {
 		return 0, fmt.Errorf("persist message: %w", err)
 	}
@@ -212,65 +146,30 @@ func (s *Store) PersistMessage(sessionID string, role string, content string, to
 }
 
 func (s *Store) LoadMessagesForSession(sessionID string) ([]message.Message, error) {
-	rows, err := s.db.Query(
-		"SELECT id, session_id, role, content, tool_calls, tool_call_id, tool_name, thinking FROM messages WHERE session_id = ? AND role NOT IN ('system', 'tool_defs', 'system_prompt') ORDER BY id",
-		sessionID,
-	)
+	msgs, err := s.r.findMessages(sessionID, 0, []string{"system", "tool_defs", "system_prompt"}, "", 0)
 	if err != nil {
 		return nil, fmt.Errorf("load messages for session: %w", err)
 	}
-	defer rows.Close()
-
-	var msgs []message.Message
-	for rows.Next() {
-		var msg message.Message
-		var toolCallsJSON []byte
-		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &toolCallsJSON, &msg.ToolCallID, &msg.ToolName, &msg.Thinking); err != nil {
-			return nil, fmt.Errorf("scan message: %w", err)
-		}
-		if toolCallsJSON != nil {
-			json.Unmarshal(toolCallsJSON, &msg.ToolCalls)
-		}
-		msgs = append(msgs, msg)
-	}
-	return msgs, rows.Err()
+	return msgs, nil
 }
 
 func (s *Store) LoadMessagesUpToID(sessionID string, upToMsgID int64) ([]message.Message, error) {
-	rows, err := s.db.Query(
-		"SELECT id, session_id, role, content, tool_calls, tool_call_id, tool_name, thinking FROM messages WHERE session_id = ? AND id <= ? AND role NOT IN ('system', 'tool_defs', 'system_prompt') ORDER BY id",
-		sessionID, upToMsgID,
-	)
+	msgs, err := s.r.findMessages(sessionID, upToMsgID, []string{"system", "tool_defs", "system_prompt"}, "", 0)
 	if err != nil {
 		return nil, fmt.Errorf("load messages up to id: %w", err)
 	}
-	defer rows.Close()
-
-	var msgs []message.Message
-	for rows.Next() {
-		var msg message.Message
-		var toolCallsJSON []byte
-		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &toolCallsJSON, &msg.ToolCallID, &msg.ToolName, &msg.Thinking); err != nil {
-			return nil, fmt.Errorf("scan message: %w", err)
-		}
-		if toolCallsJSON != nil {
-			json.Unmarshal(toolCallsJSON, &msg.ToolCalls)
-		}
-		msgs = append(msgs, msg)
-	}
-	return msgs, rows.Err()
+	return msgs, nil
 }
 
 func (s *Store) GetFirstUserMessage(sessionID string) (string, error) {
-	var content string
-	err := s.db.QueryRow(
-		"SELECT content FROM messages WHERE session_id = ? AND role = 'user' ORDER BY id ASC LIMIT 1",
-		sessionID,
-	).Scan(&content)
-	if err == sql.ErrNoRows {
+	msgs, err := s.r.findMessages(sessionID, 0, nil, "user", 1)
+	if err != nil {
+		return "", err
+	}
+	if len(msgs) == 0 {
 		return "", nil
 	}
-	return content, err
+	return msgs[0].Content, nil
 }
 
 func (s *Store) LoadFullHistory(sessionID string) ([]message.Message, error) {
@@ -295,64 +194,32 @@ func (s *Store) LoadFullHistory(sessionID string) ([]message.Message, error) {
 }
 
 func (s *Store) CreateBranch(sessionID, parentID string, parentMsgID int64) error {
-	_, err := s.db.Exec(
-		"INSERT INTO branches (session_id, parent_id, parent_msg_id) VALUES (?, ?, ?)",
-		sessionID, parentID, parentMsgID,
-	)
-	if err != nil {
+	if err := s.r.insertBranch(sessionID, parentID, parentMsgID); err != nil {
 		return fmt.Errorf("create branch: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) LoadBranchMeta(sessionID string) (*BranchMeta, error) {
-	row := s.db.QueryRow(
-		"SELECT session_id, parent_id, parent_msg_id FROM branches WHERE session_id = ?",
-		sessionID,
-	)
-	var b BranchMeta
-	var parentID sql.NullString
-	var parentMsgID sql.NullInt64
-	if err := row.Scan(&b.SessionID, &parentID, &parentMsgID); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
+	b, err := s.r.getBranch(sessionID)
+	if err != nil {
 		return nil, fmt.Errorf("load branch meta: %w", err)
 	}
-	if parentID.Valid {
-		b.ParentID = parentID.String
-	}
-	if parentMsgID.Valid {
-		b.ParentMsgID = parentMsgID.Int64
-	}
-	return &b, nil
+	return b, nil
 }
 
 func (s *Store) ListBranches(sessionID string) ([]BranchMeta, error) {
-	rows, err := s.db.Query(
-		"SELECT b.session_id, b.parent_id, b.parent_msg_id FROM branches b WHERE b.parent_id = ?",
-		sessionID,
-	)
+	branches, err := s.r.findBranches(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list branches: %w", err)
 	}
-	defer rows.Close()
-
-	var branches []BranchMeta
-	for rows.Next() {
-		var b BranchMeta
-		if err := rows.Scan(&b.SessionID, &b.ParentID, &b.ParentMsgID); err != nil {
-			return nil, fmt.Errorf("scan branch: %w", err)
-		}
-		branches = append(branches, b)
-	}
-	return branches, rows.Err()
+	return branches, nil
 }
 
 func (s *Store) walkBranchUp(sessionID string, fn func(*BranchMeta) error) error {
 	currentID := sessionID
 	for currentID != "" {
-		meta, err := s.LoadBranchMeta(currentID)
+		meta, err := s.r.getBranch(currentID)
 		if err != nil {
 			return fmt.Errorf("load branch meta for %s: %w", currentID, err)
 		}
@@ -392,7 +259,7 @@ func (s *Store) ComputeDepth(sessionID string) (int, error) {
 }
 
 func (s *Store) GetParentBranch(sessionID string) (*BranchMeta, error) {
-	return s.LoadBranchMeta(sessionID)
+	return s.r.getBranch(sessionID)
 }
 
 func MarshalToolCalls(v interface{}) []byte {

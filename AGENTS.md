@@ -39,8 +39,9 @@ TUI logs to `~/.devlin/devlin.log`. Gateway logs to stdout.
 Two binaries communicating over WebSocket (`/ws`):
 
 - **`cmd/devlin/`** — Bubble Tea TUI. Files: `model.go` (Update loop, rendering), `ws.go` (WebSocket commands/events), `render.go` (message rendering helpers), `styles.go` (style constants).
-- **`cmd/gateway/`** — Chi HTTP server. `stream.go` drives the LLM loop (stream tokens, dispatch tool calls, stream results back). `ws.go` handles WebSocket upgrade.
-- **`internal/session/`** — Session lifecycle + SQLite store. `session.go` (LLM loop, branching), `store.go` (DB queries), `event.go` (event types).
+- **`cmd/gateway/`** — Chi HTTP server. `conn.go` (WebSocket connection loop, inbound message dispatch), `main.go` (setup, server lifecycle), `ws.go` (WebSocket upgrade).
+- **`internal/session/`** — Session lifecycle + LLM loop. `session.go` (process loop, branching, subagents), `event.go` (Event type alias, SubagentEmitter).
+- **`internal/store/`** — SQLite persistence. `store.go` (all DB types, queries, helpers).
 - **`internal/tool/`** — Tool interface + registry. `tool.go` defines `Tool` and `StreamingExecutor` interfaces. Tools self-register via `init()` in their own file.
 - **`internal/llm/`** — LLM provider interface + registry. Same `init()` pattern. Currently only `zai-coding-plan` (OpenAI-compatible SSE at `api.z.ai`).
 - **`internal/channel/`** — Wire types: `InboundMessage`, `OutboundMessage`, `BranchInfo`, `HistoryMessage`, `BranchPoint`. Shared by both binaries.
@@ -56,6 +57,20 @@ Two binaries communicating over WebSocket (`/ws`):
 - **Tool registry**: New tools call `tool.Register()` in an `init()` function in a new file within `internal/tool/`. Implement `Tool` interface. Optionally implement `StreamingExecutor` for streaming output (e.g. PTY-based bash).
 - **Model naming**: Config `model` field is `provider/model` (e.g. `zai-coding-plan/glm-5.1`). Split on `/` — first part is provider name, second is model name.
 - **Vendor dir**: Exists locally but is gitignored. `go build` works without it via module cache.
+
+### `store.go` grouping
+
+Functions in `internal/store/store.go` must follow this order:
+
+1. Types (`Store`, `BranchMeta`, `SessionMeta`)
+2. Constructor / lifecycle (`NewStore`, `Close`)
+3. Migration (`migrate`)
+4. Session CRUD (`CreateSession`, `TouchSession`, `SessionExists`, `GetLastSession`, `GetChannelMode`, `ListSessions`)
+5. Message CRUD (`InsertMessage`, `PersistMessage`)
+6. Message queries (`LoadMessagesForSession`, `LoadMessagesUpToID`, `GetFirstUserMessage`, `LoadFullHistory`)
+7. Branch CRUD (`CreateBranch`, `LoadBranchMeta`, `ListBranches`)
+8. Branch queries (`walkBranchUp`, `LoadBranchChain`, `ComputeDepth`, `GetParentBranch`)
+9. JSON helpers (`MarshalToolCalls`, `MarshalUsage`)
 
 ## Design Principles
 
