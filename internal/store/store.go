@@ -1,4 +1,4 @@
-package session
+package store
 
 import (
 	"database/sql"
@@ -131,7 +131,7 @@ func (s *Store) TouchSession(id string) error {
 	return nil
 }
 
-func (s *Store) persistMessage(sessionID string, role string, content string, toolCallsJSON []byte, toolCallID string, toolName string, thinking string, model string, usageJSON []byte) (int64, error) {
+func (s *Store) PersistMessage(sessionID string, role string, content string, toolCallsJSON []byte, toolCallID string, toolName string, thinking string, model string, usageJSON []byte) (int64, error) {
 	ts := float64(time.Now().UnixNano()) / 1e9
 	id, err := s.InsertMessage(sessionID, role, content, toolCallsJSON, toolCallID, toolName, thinking, model, usageJSON, ts)
 	if err != nil {
@@ -143,7 +143,7 @@ func (s *Store) persistMessage(sessionID string, role string, content string, to
 	return id, nil
 }
 
-func marshalToolCalls(v interface{}) []byte {
+func MarshalToolCalls(v interface{}) []byte {
 	if v == nil {
 		return nil
 	}
@@ -155,7 +155,7 @@ func marshalToolCalls(v interface{}) []byte {
 	return b
 }
 
-func marshalUsage(v interface{}) []byte {
+func MarshalUsage(v interface{}) []byte {
 	if v == nil {
 		return nil
 	}
@@ -362,6 +362,15 @@ func (s *Store) GetLastSession(channel, mode string) (string, error) {
 		return "", fmt.Errorf("get last session: %w", err)
 	}
 	return id, nil
+}
+
+func (s *Store) GetChannelMode(sessionID string) (string, string, error) {
+	var channel, mode string
+	err := s.db.QueryRow("SELECT channel, mode FROM sessions WHERE id = ?", sessionID).Scan(&channel, &mode)
+	if err != nil {
+		return "", "", fmt.Errorf("get channel/mode: %w", err)
+	}
+	return channel, mode, nil
 }
 
 func (s *Store) GetParentBranch(sessionID string) (*BranchMeta, error) {

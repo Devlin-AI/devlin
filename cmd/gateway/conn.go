@@ -8,6 +8,7 @@ import (
 	"github.com/devlin-ai/devlin/internal/llm"
 	"github.com/devlin-ai/devlin/internal/logger"
 	"github.com/devlin-ai/devlin/internal/session"
+	"github.com/devlin-ai/devlin/internal/store"
 	"github.com/gorilla/websocket"
 )
 
@@ -15,7 +16,7 @@ type connState struct {
 	conn     *websocket.Conn
 	writeMu  sync.Mutex
 	sess     *session.Session
-	store    *session.Store
+	store    *store.Store
 	provider llm.Provider
 	model    string
 	channel  string
@@ -147,7 +148,7 @@ func (cs *connState) handleListSessions(msg channel.InboundMessage) {
 	})
 }
 
-func (cs *connState) branchInfos(metas []session.BranchMeta) []channel.BranchInfo {
+func (cs *connState) branchInfos(metas []store.BranchMeta) []channel.BranchInfo {
 	infos := make([]channel.BranchInfo, len(metas))
 	for i, m := range metas {
 		firstMsg, err := cs.store.GetFirstUserMessage(m.SessionID)

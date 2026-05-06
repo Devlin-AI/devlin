@@ -14,13 +14,14 @@ import (
 	"github.com/devlin-ai/devlin/internal/logger"
 	"github.com/devlin-ai/devlin/internal/process"
 	"github.com/devlin-ai/devlin/internal/session"
+	"github.com/devlin-ai/devlin/internal/store"
 
 	_ "github.com/devlin-ai/devlin/internal/tool"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-func setupGateway() (llm.Provider, *session.Store, string, int, error) {
+func setupGateway() (llm.Provider, *store.Store, string, int, error) {
 	logger.Init()
 	log := logger.L()
 
@@ -48,7 +49,7 @@ func setupGateway() (llm.Provider, *session.Store, string, int, error) {
 
 	home, _ := os.UserHomeDir()
 	dbPath := filepath.Join(home, ".devlin", "devlin.db")
-	store, err := session.NewStore(dbPath)
+	store, err := store.NewStore(dbPath)
 	if err != nil {
 		log.Error("failed to open store", "error", err)
 		return nil, nil, "", 0, err
