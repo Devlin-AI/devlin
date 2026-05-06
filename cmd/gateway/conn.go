@@ -147,6 +147,54 @@ func (cs *connState) handleListSessions(msg channel.InboundMessage) {
 	})
 }
 
+func (cs *connState) branchInfos(metas []session.BranchMeta) []channel.BranchInfo {
+	infos := make([]channel.BranchInfo, len(metas))
+	for i, m := range metas {
+		firstMsg, err := cs.store.GetFirstUserMessage(m.SessionID)
+		if err != nil {
+			logger.L().Error("get first user message failed", "session_id", m.SessionID, "error", err)
+		}
+		infos[i] = channel.BranchInfo{
+			SessionID:    m.SessionID,
+			ParentMsgID:  m.ParentMsgID,
+			FirstMessage: firstMsg,
+		}
+	}
+	return infos
+}
+
+func (cs *connState) loadSiblingInfo(sessionID string) (*channel.BranchInfo, []channel.BranchInfo, int) {
+	currentMeta, err := cs.store.LoadBranchMeta(sessionID)
+	if err != nil {
+		logger.L().Error("load branch meta failed", "session_id", sessionID, "error", err)
+		return nil, nil, 0
+	}
+	if currentMeta == nil || currentMeta.ParentID == "" {
+		return nil, nil, 0
+	}
+
+	parent := &channel.BranchInfo{
+		SessionID:   currentMeta.ParentID,
+		ParentMsgID: currentMeta.ParentMsgID,
+	}
+
+	metas, err := cs.store.ListBranches(currentMeta.ParentID)
+	if err != nil {
+		logger.L().Error("list parent branches failed", "parent_id", currentMeta.ParentID, "error", err)
+		return parent, nil, 0
+	}
+
+	siblings := cs.branchInfos(metas)
+	idx := 0
+	for i, s := range siblings {
+		if s.SessionID == sessionID {
+			idx = i
+			break
+		}
+	}
+	return parent, siblings, idx
+}
+
 func (cs *connState) handleHistory(msg channel.InboundMessage) {
 	if !cs.requireSession() {
 		return
@@ -206,54 +254,13 @@ func (cs *connState) handleHistory(msg channel.InboundMessage) {
 		})
 	}
 
-	var parent *channel.BranchInfo
-	var siblings []channel.BranchInfo
-	var siblingIdx int
-	currentMeta, err := cs.store.LoadBranchMeta(targetID)
-	if err != nil {
-		logger.L().Error("load branch meta failed", "session_id", targetID, "error", err)
-	}
-	if currentMeta != nil && currentMeta.ParentID != "" {
-		parent = &channel.BranchInfo{
-			SessionID:   currentMeta.ParentID,
-			ParentMsgID: currentMeta.ParentMsgID,
-		}
-		parentChildren, err := cs.store.ListBranches(currentMeta.ParentID)
-		if err != nil {
-			logger.L().Error("list parent branches failed", "parent_id", currentMeta.ParentID, "error", err)
-		}
-		for i, pc := range parentChildren {
-			firstMsg, err := cs.store.GetFirstUserMessage(pc.SessionID)
-			if err != nil {
-				logger.L().Error("get first user message failed", "session_id", pc.SessionID, "error", err)
-			}
-			siblings = append(siblings, channel.BranchInfo{
-				SessionID:    pc.SessionID,
-				ParentMsgID:  pc.ParentMsgID,
-				FirstMessage: firstMsg,
-			})
-			if pc.SessionID == targetID {
-				siblingIdx = i
-			}
-		}
-	}
+	parent, siblings, siblingIdx := cs.loadSiblingInfo(targetID)
 
 	childMetas, err := cs.store.ListBranches(targetID)
 	if err != nil {
 		logger.L().Error("list child branches failed", "session_id", targetID, "error", err)
 	}
-	children := make([]channel.BranchInfo, len(childMetas))
-	for i, b := range childMetas {
-		firstMsg, err := cs.store.GetFirstUserMessage(b.SessionID)
-		if err != nil {
-			logger.L().Error("get first user message failed", "session_id", b.SessionID, "error", err)
-		}
-		children[i] = channel.BranchInfo{
-			SessionID:    b.SessionID,
-			ParentMsgID:  b.ParentMsgID,
-			FirstMessage: firstMsg,
-		}
-	}
+	children := cs.branchInfos(childMetas)
 
 	cs.send(channel.OutboundMessage{
 		Type:         "session_state",
