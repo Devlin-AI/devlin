@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/devlin-ai/devlin/internal/channel"
+	"github.com/devlin-ai/devlin/internal/protocol"
 	"github.com/devlin-ai/devlin/internal/config"
 	"github.com/devlin-ai/devlin/internal/tool"
 	"github.com/gorilla/websocket"
@@ -49,10 +49,13 @@ type model struct {
 	reconnectAttempt int
 	sessionID        string
 	lastMsgID        int64
-	parent           *channel.BranchInfo
-	childBranches    []channel.BranchInfo
-	branchPoints     []channel.BranchPoint
-	siblings         []channel.BranchInfo
+parent           *protocol.BranchInfo
+
+	childBranches    []protocol.BranchInfo
+
+	branchPoints     []protocol.BranchPoint
+
+	siblings         []protocol.BranchInfo
 	siblingIdx       int
 	unlimitedTools   map[string]bool
 }
@@ -188,7 +191,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
 
-				err := m.conn.WriteJSON(channel.InboundMessage{Content: val})
+				err := m.conn.WriteJSON(protocol.InboundMessage{Content: val})
 				if err != nil {
 					m.streaming = false
 					m.messages[len(m.messages)-1] = message{role: "error", text: err.Error()}
@@ -512,7 +515,7 @@ func (m model) renderMessages() string {
 	var s string
 	w := m.viewport.Width
 
-	childAt := make(map[int64][]channel.BranchInfo)
+	childAt := make(map[int64][]protocol.BranchInfo)
 	for _, b := range m.childBranches {
 		childAt[b.ParentMsgID] = append(childAt[b.ParentMsgID], b)
 	}

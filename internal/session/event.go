@@ -1,8 +1,8 @@
 package session
 
-import "github.com/devlin-ai/devlin/internal/channel"
+import "github.com/devlin-ai/devlin/internal/protocol"
 
-type Event = channel.OutboundMessage
+type Event = protocol.OutboundMessage
 
 type EventEmitter interface {
 	SendEvent(Event)

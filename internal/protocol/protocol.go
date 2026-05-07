@@ -1,4 +1,4 @@
-package channel
+package protocol
 
 const (
 	ModeAssistant = "assistant"

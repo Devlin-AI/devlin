@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
-	"github.com/devlin-ai/devlin/internal/channel"
+	"github.com/devlin-ai/devlin/internal/protocol"
 	"github.com/devlin-ai/devlin/internal/tool"
 )
 
@@ -208,7 +208,7 @@ func truncID(id string) string {
 	return id
 }
 
-func renderBranchTree(branches []channel.BranchInfo, w int) string {
+func renderBranchTree(branches []protocol.BranchInfo, w int) string {
 	var s string
 	for i, b := range branches {
 		connector := "├─ "
