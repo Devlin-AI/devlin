@@ -73,3 +73,4 @@ type StreamEvent struct {
 	StatusCode int             `json:"status_code,omitempty"`
 	Usage      *Usage          `json:"usage,omitempty"`
 }
+

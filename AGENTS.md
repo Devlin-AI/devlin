@@ -65,7 +65,7 @@ Functions in `internal/store/store.go` must follow this order:
 1. Types (`Store`, `BranchMeta`, `SessionMeta`)
 2. Constructor / lifecycle (`NewStore`, `Close`)
 3. Migration (`migrate`)
-4. Session CRUD (`CreateSession`, `TouchSession`, `SessionExists`, `GetLastSession`, `GetChannelMode`, `ListSessions`)
+4. Session CRUD (`CreateSession`, `TouchSession`, `SessionExists`, `GetSession`, `GetLastSession`, `ListSessions`)
 5. Message CRUD (`InsertMessage`, `PersistMessage`)
 6. Message queries (`LoadMessagesForSession`, `LoadMessagesUpToID`, `GetFirstUserMessage`, `LoadFullHistory`)
 7. Branch CRUD (`CreateBranch`, `LoadBranchMeta`, `ListBranches`)

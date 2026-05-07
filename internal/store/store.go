@@ -17,20 +17,6 @@ type Store struct {
 	r *repo
 }
 
-type BranchMeta struct {
-	SessionID   string
-	ParentID    string
-	ParentMsgID int64
-}
-
-type SessionMeta struct {
-	ID        string
-	Channel   string
-	Mode      string
-	CreatedAt int64
-	UpdatedAt int64
-}
-
 func NewStore(dbPath string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create db directory: %w", err)
@@ -147,7 +133,7 @@ func (s *Store) LoadMessagesForSession(sessionID string) ([]message.Message, err
 	if err != nil {
 		return nil, fmt.Errorf("load messages for session: %w", err)
 	}
-	return msgs, nil
+	return ToMessages(msgs), nil
 }
 
 func (s *Store) LoadMessagesUpToID(sessionID string, upToMsgID int64) ([]message.Message, error) {
@@ -155,7 +141,7 @@ func (s *Store) LoadMessagesUpToID(sessionID string, upToMsgID int64) ([]message
 	if err != nil {
 		return nil, fmt.Errorf("load messages up to id: %w", err)
 	}
-	return msgs, nil
+	return ToMessages(msgs), nil
 }
 
 func (s *Store) GetFirstUserMessage(sessionID string) (string, error) {
@@ -257,6 +243,31 @@ func (s *Store) ComputeDepth(sessionID string) (int, error) {
 
 func (s *Store) GetParentBranch(sessionID string) (*BranchMeta, error) {
 	return s.r.getBranch(sessionID)
+}
+
+func (m *Message) ToMessage() *message.Message {
+	out := &message.Message{
+		ID:         m.ID,
+		SessionID:  m.SessionID,
+		Role:       message.Role(m.Role),
+		Content:    m.Content,
+		ToolCallID: m.ToolCallID,
+		ToolName:   m.ToolName,
+		Thinking:   m.Thinking,
+		Timestamp:  time.Unix(int64(m.Timestamp), 0),
+	}
+	if m.ToolCalls != "" {
+		json.Unmarshal([]byte(m.ToolCalls), &out.ToolCalls)
+	}
+	return out
+}
+
+func ToMessages(models []Message) []message.Message {
+	out := make([]message.Message, len(models))
+	for i := range models {
+		out[i] = *models[i].ToMessage()
+	}
+	return out
 }
 
 func MarshalToolCalls(v interface{}) []byte {

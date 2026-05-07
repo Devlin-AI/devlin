@@ -2,11 +2,8 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/devlin-ai/devlin/internal/message"
 )
 
 type repo struct {
@@ -144,21 +141,17 @@ func (r *repo) insertMessage(sessionID, role, content string, toolCalls []byte, 
 	return result.LastInsertId()
 }
 
-func (r *repo) getMessage(id int64) (*message.Message, error) {
+func (r *repo) getMessage(id int64) (*Message, error) {
 	row := r.db.QueryRow(
 		"SELECT id, session_id, role, content, tool_calls, tool_call_id, tool_name, thinking FROM messages WHERE id = ?",
 		id,
 	)
-	var msg message.Message
-	var toolCallsJSON []byte
-	if err := row.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &toolCallsJSON, &msg.ToolCallID, &msg.ToolName, &msg.Thinking); err != nil {
+	var msg Message
+	if err := row.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.ToolCalls, &msg.ToolCallID, &msg.ToolName, &msg.Thinking); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, err
-	}
-	if toolCallsJSON != nil {
-		json.Unmarshal(toolCallsJSON, &msg.ToolCalls)
 	}
 	return &msg, nil
 }
@@ -184,7 +177,7 @@ func (r *repo) deleteMessage(id int64) error {
 	return err
 }
 
-func (r *repo) findMessages(sessionID string, upToID int64, excludeRoles []string, role string, limit int) ([]message.Message, error) {
+func (r *repo) findMessages(sessionID string, upToID int64, excludeRoles []string, role string, limit int) ([]Message, error) {
 	query := "SELECT id, session_id, role, content, tool_calls, tool_call_id, tool_name, thinking FROM messages WHERE 1=1"
 	var args []any
 	if sessionID != "" {
@@ -218,15 +211,11 @@ func (r *repo) findMessages(sessionID string, upToID int64, excludeRoles []strin
 	}
 	defer rows.Close()
 
-	var msgs []message.Message
+	var msgs []Message
 	for rows.Next() {
-		var msg message.Message
-		var toolCallsJSON []byte
-		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &toolCallsJSON, &msg.ToolCallID, &msg.ToolName, &msg.Thinking); err != nil {
+		var msg Message
+		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.ToolCalls, &msg.ToolCallID, &msg.ToolName, &msg.Thinking); err != nil {
 			return nil, err
-		}
-		if toolCallsJSON != nil {
-			json.Unmarshal(toolCallsJSON, &msg.ToolCalls)
 		}
 		msgs = append(msgs, msg)
 	}
