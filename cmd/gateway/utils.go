@@ -74,7 +74,9 @@ func (cs *connState) handleHistory(msg protocol.InboundMessage) {
 	toolCallArgs := make(map[string]string)
 	for _, m := range msgs {
 		if m.Role == "assistant" {
-			for _, tc := range m.ToolCalls {
+			var calls []store.ToolCall
+			json.Unmarshal([]byte(m.ToolCalls), &calls)
+			for _, tc := range calls {
 				toolCallArgs[tc.ID] = tc.Function.Arguments
 			}
 		}
@@ -83,14 +85,17 @@ func (cs *connState) handleHistory(msg protocol.InboundMessage) {
 	histMsgs := make([]protocol.HistoryMessage, 0, len(msgs))
 	for _, m := range msgs {
 		var toolCallsJSON string
-		if len(m.ToolCalls) > 0 {
-			if b, err := json.Marshal(m.ToolCalls); err == nil {
-				toolCallsJSON = string(b)
+		if m.ToolCalls != "" {
+			var calls []store.ToolCall
+			if err := json.Unmarshal([]byte(m.ToolCalls), &calls); err == nil {
+				if b, err := json.Marshal(calls); err == nil {
+					toolCallsJSON = string(b)
+				}
 			}
 		}
 		hm := protocol.HistoryMessage{
 			ID:        m.ID,
-			Role:      string(m.Role),
+			Role:      m.Role,
 			Content:   m.Content,
 			ToolName:  m.ToolName,
 			ToolCalls: toolCallsJSON,

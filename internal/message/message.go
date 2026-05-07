@@ -1,76 +1,54 @@
 package message
 
 import (
-	"encoding/json"
 	"time"
+
+	"github.com/devlin-ai/devlin/internal/store"
 )
 
-type Role string
-type StreamEventType string
+type Role = store.Role
+type StreamEventType = store.StreamEventType
+type ToolCall = store.ToolCall
+type ToolDef = store.ToolDef
+type FunctionDef = store.FunctionDef
+type Usage = store.Usage
 
 const (
-	RoleUser      Role = "user"
-	RoleAssistant Role = "assistant"
-	RoleSystem    Role = "system"
-	RoleTool      Role = "tool"
+	RoleUser      = store.RoleUser
+	RoleAssistant = store.RoleAssistant
+	RoleSystem    = store.RoleSystem
+	RoleTool      = store.RoleTool
 )
 
 const (
-	StreamEventToken      StreamEventType = "token"
-	StreamEventThinking   StreamEventType = "thinking"
-	StreamEventDone       StreamEventType = "done"
-	StreamEventError      StreamEventType = "error"
-	StreamEventToolStart  StreamEventType = "tool_start"
-	StreamEventToolOutput StreamEventType = "tool_output"
-	StreamEventToolEnd    StreamEventType = "tool_end"
+	StreamEventToken      = store.StreamEventToken
+	StreamEventThinking   = store.StreamEventThinking
+	StreamEventDone       = store.StreamEventDone
+	StreamEventError      = store.StreamEventError
+	StreamEventToolStart  = store.StreamEventToolStart
+	StreamEventToolOutput = store.StreamEventToolOutput
+	StreamEventToolEnd    = store.StreamEventToolEnd
 )
-
-type ToolCall struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	} `json:"function"`
-}
-
-type ToolDef struct {
-	Type     string      `json:"type"`
-	Function FunctionDef `json:"function"`
-}
-
-type FunctionDef struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  json.RawMessage `json:"parameters"`
-}
 
 type Message struct {
-	ID         int64      `json:"id"`
-	SessionID  string     `json:"session_id"`
-	Role       Role       `json:"role"`
-	Content    string     `json:"content"`
-	Timestamp  time.Time  `json:"timestamp"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	ToolName   string     `json:"tool_name,omitempty"`
-	Thinking   string     `json:"thinking,omitempty"`
-}
-
-type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	ID         int64          `json:"id"`
+	SessionID  string         `json:"session_id"`
+	Role       store.Role     `json:"role"`
+	Content    string         `json:"content"`
+	Timestamp  time.Time      `json:"timestamp"`
+	ToolCalls  []store.ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	ToolName   string         `json:"tool_name,omitempty"`
+	Thinking   string         `json:"thinking,omitempty"`
 }
 
 type StreamEvent struct {
-	SessionID  string          `json:"session_id"`
-	Type       StreamEventType `json:"type"`
-	Token      string          `json:"token,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	ToolName   string          `json:"tool_name,omitempty"`
-	ToolID     string          `json:"tool_id,omitempty"`
-	StatusCode int             `json:"status_code,omitempty"`
-	Usage      *Usage          `json:"usage,omitempty"`
+	SessionID  string              `json:"session_id"`
+	Type       store.StreamEventType `json:"type"`
+	Token      string              `json:"token,omitempty"`
+	Error      string              `json:"error,omitempty"`
+	ToolName   string              `json:"tool_name,omitempty"`
+	ToolID     string              `json:"tool_id,omitempty"`
+	StatusCode int                 `json:"status_code,omitempty"`
+	Usage      *store.Usage        `json:"usage,omitempty"`
 }
-

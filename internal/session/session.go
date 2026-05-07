@@ -79,10 +79,37 @@ func New(provider llm.Provider, db *store.Store, ch string, mode string, model s
 	return s, nil
 }
 
+func toMessage(m store.Message) message.Message {
+	return message.Message{
+		ID:         m.ID,
+		SessionID:  m.SessionID,
+		Role:       store.Role(m.Role),
+		Content:    m.Content,
+		ToolCallID: m.ToolCallID,
+		ToolName:   m.ToolName,
+		Thinking:   m.Thinking,
+		Timestamp:  time.Unix(int64(m.Timestamp), 0),
+		ToolCalls:  parseToolCalls(m.ToolCalls),
+	}
+}
+
+func parseToolCalls(raw string) []store.ToolCall {
+	if raw == "" {
+		return nil
+	}
+	var calls []store.ToolCall
+	json.Unmarshal([]byte(raw), &calls)
+	return calls
+}
+
 func Load(provider llm.Provider, db *store.Store, sessionID string, model string, onEvent func(Event)) (*Session, error) {
-	history, err := db.LoadFullHistory(sessionID)
+	rawHistory, err := db.LoadFullHistory(sessionID)
 	if err != nil {
 		return nil, err
+	}
+	history := make([]message.Message, len(rawHistory))
+	for i, m := range rawHistory {
+		history[i] = toMessage(m)
 	}
 
 	meta, err := db.LoadBranchMeta(sessionID)
@@ -191,13 +218,15 @@ func (s *Session) Branch(msgID int64) (*Session, error) {
 		return nil, err
 	}
 
-	parentHistory, err := s.store.LoadMessagesUpToID(s.id, msgID)
+	rawHistory, err := s.store.LoadMessagesUpToID(s.id, msgID)
 	if err != nil {
 		return nil, err
 	}
 
-	historyCopy := make([]message.Message, len(parentHistory))
-	copy(historyCopy, parentHistory)
+	historyCopy := make([]message.Message, len(rawHistory))
+	for i, m := range rawHistory {
+		historyCopy[i] = toMessage(m)
+	}
 
 	branch := &Session{
 		id:           branchID,
@@ -228,9 +257,13 @@ func (s *Session) SwitchTo(sessionID string) (*Session, error) {
 		return nil, fmt.Errorf("session %s not found", sessionID)
 	}
 
-	history, err := s.store.LoadFullHistory(sessionID)
+	rawHistory, err := s.store.LoadFullHistory(sessionID)
 	if err != nil {
 		return nil, err
+	}
+	history := make([]message.Message, len(rawHistory))
+	for i, m := range rawHistory {
+		history[i] = toMessage(m)
 	}
 
 	meta, err := s.store.LoadBranchMeta(sessionID)
@@ -325,7 +358,7 @@ func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt str
 	child.ProcessMessage(taskPrompt)
 
 	for i := len(child.history) - 1; i >= 0; i-- {
-		if child.history[i].Role == message.RoleAssistant {
+		if child.history[i].Role == store.RoleAssistant {
 			return child.history[i].Content, nil
 		}
 	}
@@ -398,7 +431,7 @@ func (s *Session) getLastAssistantResponse() string {
 	s.historyMu.Lock()
 	defer s.historyMu.Unlock()
 	for i := len(s.history) - 1; i >= 0; i-- {
-		if s.history[i].Role == message.RoleAssistant {
+		if s.history[i].Role == store.RoleAssistant {
 			return s.history[i].Content
 		}
 	}
@@ -417,12 +450,12 @@ func buildSubagentTools(depth int) map[string]tool.Tool {
 	return filtered
 }
 
-func buildToolDefsWithTools(tools map[string]tool.Tool) []message.ToolDef {
-	defs := make([]message.ToolDef, 0, len(tools))
+func buildToolDefsWithTools(tools map[string]tool.Tool) []store.ToolDef {
+	defs := make([]store.ToolDef, 0, len(tools))
 	for _, t := range tools {
-		defs = append(defs, message.ToolDef{
+		defs = append(defs, store.ToolDef{
 			Type: "function",
-			Function: message.FunctionDef{
+			Function: store.FunctionDef{
 				Name:        t.Name(),
 				Description: t.Description(),
 				Parameters:  t.Parameters(),
@@ -437,11 +470,11 @@ func (s *Session) ProcessMessage(content string) {
 	defer s.mu.Unlock()
 
 	s.history = append(s.history, message.Message{
-		Role:      message.RoleUser,
+		Role:      store.RoleUser,
 		Content:   content,
 		Timestamp: time.Now(),
 	})
-	if _, err := s.store.PersistMessage(s.id, string(message.RoleUser), content, nil, "", "", "", "", nil); err != nil {
+	if _, err := s.store.PersistMessage(s.id, string(store.RoleUser), content, nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist user message", "session_id", s.id, "error", err)
 	}
 
@@ -522,7 +555,7 @@ func (s *Session) processLoop() {
 		var thinkingText string
 		var toolCalls []toolCall
 		var streamErr error
-		var streamUsage *message.Usage
+		var streamUsage *store.Usage
 
 		var stallRetries int
 
@@ -565,20 +598,20 @@ func (s *Session) processLoop() {
 			var retryNeeded bool
 			var tokensReceived bool
 			for evt := range ch {
-				switch evt.Type {
-				case message.StreamEventToken:
-					assistantText += evt.Token
-					s.emitter.SendEvent(Event{Type: "token", Content: evt.Token})
-					tokensReceived = true
-				case message.StreamEventThinking:
-					thinkingText += evt.Token
-					s.emitter.SendEvent(Event{Type: "thinking", Content: evt.Token})
-					tokensReceived = true
-				case message.StreamEventDone:
-					if evt.Usage != nil {
-						streamUsage = evt.Usage
-					}
-				case message.StreamEventToolStart:
+	switch evt.Type {
+		case store.StreamEventToken:
+			assistantText += evt.Token
+			s.emitter.SendEvent(Event{Type: "token", Content: evt.Token})
+			tokensReceived = true
+		case store.StreamEventThinking:
+			thinkingText += evt.Token
+			s.emitter.SendEvent(Event{Type: "thinking", Content: evt.Token})
+			tokensReceived = true
+		case store.StreamEventDone:
+			if evt.Usage != nil {
+				streamUsage = evt.Usage
+			}
+		case store.StreamEventToolStart:
 					if evt.ToolID != "" {
 						if len(toolCalls) > 0 {
 							s.emitter.SendToolStart(toolCalls[len(toolCalls)-1])
@@ -591,7 +624,7 @@ func (s *Session) processLoop() {
 					} else if len(toolCalls) > 0 {
 						toolCalls[len(toolCalls)-1].Args += evt.Token
 					}
-				case message.StreamEventError:
+				case store.StreamEventError:
 					if ctx.Err() != nil {
 						s.emitter.SendEvent(Event{Type: "cancelled"})
 						s.history = s.history[:len(s.history)-1]
@@ -662,12 +695,12 @@ func (s *Session) processLoop() {
 		}
 
 		assistantMsg := message.Message{
-			Role:      message.RoleAssistant,
+			Role:      store.RoleAssistant,
 			Content:   assistantText,
 			Timestamp: time.Now(),
 		}
 		for _, tc := range toolCalls {
-			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, message.ToolCall{
+			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, store.ToolCall{
 				ID:   tc.ID,
 				Type: "function",
 				Function: struct {
@@ -683,7 +716,7 @@ func (s *Session) processLoop() {
 		s.history = append(s.history, assistantMsg)
 		assistantMsgID, err := s.store.PersistMessage(
 			s.id,
-			string(message.RoleAssistant),
+			string(store.RoleAssistant),
 			assistantText,
 			store.MarshalToolCalls(assistantMsg.ToolCalls),
 			"", "",
@@ -839,7 +872,7 @@ func (s *Session) completeToolCall(tc toolCall, output string, disp tool.ToolDis
 	})
 
 	toolMsg := message.Message{
-		Role:       message.RoleTool,
+		Role:       store.RoleTool,
 		Content:    output,
 		ToolCallID: tc.ID,
 		Timestamp:  time.Now(),
@@ -849,7 +882,7 @@ func (s *Session) completeToolCall(tc toolCall, output string, disp tool.ToolDis
 	s.historyMu.Unlock()
 	if _, err := s.store.PersistMessage(
 		s.id,
-		string(message.RoleTool),
+		string(store.RoleTool),
 		output,
 		nil,
 		tc.ID,
@@ -866,13 +899,13 @@ type toolCall struct {
 	Args string
 }
 
-func buildToolDefs() []message.ToolDef {
+func buildToolDefs() []store.ToolDef {
 	tools := tool.All()
-	defs := make([]message.ToolDef, 0, len(tools))
+	defs := make([]store.ToolDef, 0, len(tools))
 	for _, t := range tools {
-		defs = append(defs, message.ToolDef{
+		defs = append(defs, store.ToolDef{
 			Type: "function",
-			Function: message.FunctionDef{
+			Function: store.FunctionDef{
 				Name:        t.Name(),
 				Description: t.Description(),
 				Parameters:  t.Parameters(),

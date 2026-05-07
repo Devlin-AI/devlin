@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/devlin-ai/devlin/internal/logger"
-	"github.com/devlin-ai/devlin/internal/message"
 	_ "modernc.org/sqlite"
 )
 
@@ -128,20 +127,20 @@ func (s *Store) PersistMessage(sessionID string, role string, content string, to
 	return id, nil
 }
 
-func (s *Store) LoadMessagesForSession(sessionID string) ([]message.Message, error) {
+func (s *Store) LoadMessagesForSession(sessionID string) ([]Message, error) {
 	msgs, err := s.r.findMessages(sessionID, 0, []string{"system", "tool_defs", "system_prompt"}, "", 0)
 	if err != nil {
 		return nil, fmt.Errorf("load messages for session: %w", err)
 	}
-	return ToMessages(msgs), nil
+	return msgs, nil
 }
 
-func (s *Store) LoadMessagesUpToID(sessionID string, upToMsgID int64) ([]message.Message, error) {
+func (s *Store) LoadMessagesUpToID(sessionID string, upToMsgID int64) ([]Message, error) {
 	msgs, err := s.r.findMessages(sessionID, upToMsgID, []string{"system", "tool_defs", "system_prompt"}, "", 0)
 	if err != nil {
 		return nil, fmt.Errorf("load messages up to id: %w", err)
 	}
-	return ToMessages(msgs), nil
+	return msgs, nil
 }
 
 func (s *Store) GetFirstUserMessage(sessionID string) (string, error) {
@@ -155,7 +154,7 @@ func (s *Store) GetFirstUserMessage(sessionID string) (string, error) {
 	return msgs[0].Content, nil
 }
 
-func (s *Store) LoadFullHistory(sessionID string) ([]message.Message, error) {
+func (s *Store) LoadFullHistory(sessionID string) ([]Message, error) {
 	msgs, err := s.LoadMessagesForSession(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("load messages for %s: %w", sessionID, err)
@@ -243,31 +242,6 @@ func (s *Store) ComputeDepth(sessionID string) (int, error) {
 
 func (s *Store) GetParentBranch(sessionID string) (*BranchMeta, error) {
 	return s.r.getBranch(sessionID)
-}
-
-func (m *Message) ToMessage() *message.Message {
-	out := &message.Message{
-		ID:         m.ID,
-		SessionID:  m.SessionID,
-		Role:       message.Role(m.Role),
-		Content:    m.Content,
-		ToolCallID: m.ToolCallID,
-		ToolName:   m.ToolName,
-		Thinking:   m.Thinking,
-		Timestamp:  time.Unix(int64(m.Timestamp), 0),
-	}
-	if m.ToolCalls != "" {
-		json.Unmarshal([]byte(m.ToolCalls), &out.ToolCalls)
-	}
-	return out
-}
-
-func ToMessages(models []Message) []message.Message {
-	out := make([]message.Message, len(models))
-	for i := range models {
-		out[i] = *models[i].ToMessage()
-	}
-	return out
 }
 
 func MarshalToolCalls(v interface{}) []byte {
