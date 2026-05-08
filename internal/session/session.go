@@ -68,7 +68,7 @@ func New(provider llm.Provider, db *store.Store, ch string, mode string, model s
 	}
 	s.emitter = s
 
-	if _, err := s.store.PersistMessage(id, "tool_defs", string(store.MarshalToolCalls(buildToolDefs())), nil, "", "", "", "", nil); err != nil {
+	if _, err := s.store.PersistMessage(id, "tool_defs", string(message.MarshalToolDefs(buildToolDefs())), nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist tool_defs", "session_id", id, "error", err)
 	}
 
@@ -79,29 +79,6 @@ func New(provider llm.Provider, db *store.Store, ch string, mode string, model s
 	return s, nil
 }
 
-func toMessage(m store.Message) message.Message {
-	return message.Message{
-		ID:         m.ID,
-		SessionID:  m.SessionID,
-		Role:       store.Role(m.Role),
-		Content:    m.Content,
-		ToolCallID: m.ToolCallID,
-		ToolName:   m.ToolName,
-		Thinking:   m.Thinking,
-		Timestamp:  time.Unix(int64(m.Timestamp), 0),
-		ToolCalls:  parseToolCalls(m.ToolCalls),
-	}
-}
-
-func parseToolCalls(raw string) []store.ToolCall {
-	if raw == "" {
-		return nil
-	}
-	var calls []store.ToolCall
-	json.Unmarshal([]byte(raw), &calls)
-	return calls
-}
-
 func Load(provider llm.Provider, db *store.Store, sessionID string, model string, onEvent func(Event)) (*Session, error) {
 	rawHistory, err := db.LoadFullHistory(sessionID)
 	if err != nil {
@@ -109,7 +86,7 @@ func Load(provider llm.Provider, db *store.Store, sessionID string, model string
 	}
 	history := make([]message.Message, len(rawHistory))
 	for i, m := range rawHistory {
-		history[i] = toMessage(m)
+		history[i] = message.FromStore(m)
 	}
 
 	meta, err := db.LoadBranchMeta(sessionID)
@@ -225,7 +202,7 @@ func (s *Session) Branch(msgID int64) (*Session, error) {
 
 	historyCopy := make([]message.Message, len(rawHistory))
 	for i, m := range rawHistory {
-		historyCopy[i] = toMessage(m)
+		historyCopy[i] = message.FromStore(m)
 	}
 
 	branch := &Session{
@@ -263,7 +240,7 @@ func (s *Session) SwitchTo(sessionID string) (*Session, error) {
 	}
 	history := make([]message.Message, len(rawHistory))
 	for i, m := range rawHistory {
-		history[i] = toMessage(m)
+		history[i] = message.FromStore(m)
 	}
 
 	meta, err := s.store.LoadBranchMeta(sessionID)
@@ -347,7 +324,7 @@ func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt str
 	}
 	child.emitter = subEmitter
 
-	if _, err := s.store.PersistMessage(childID, "tool_defs", string(store.MarshalToolCalls(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
+	if _, err := s.store.PersistMessage(childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist subagent tool_defs", "session_id", childID, "error", err)
 	}
 
@@ -401,7 +378,7 @@ func (s *Session) SpawnSubagentAsync(ctx context.Context, description, taskPromp
 	}
 	child.emitter = subEmitter
 
-	if _, err := s.store.PersistMessage(childID, "tool_defs", string(store.MarshalToolCalls(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
+	if _, err := s.store.PersistMessage(childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist subagent tool_defs", "session_id", childID, "error", err)
 	}
 
@@ -450,12 +427,12 @@ func buildSubagentTools(depth int) map[string]tool.Tool {
 	return filtered
 }
 
-func buildToolDefsWithTools(tools map[string]tool.Tool) []store.ToolDef {
-	defs := make([]store.ToolDef, 0, len(tools))
+func buildToolDefsWithTools(tools map[string]tool.Tool) []message.ToolDef {
+	defs := make([]message.ToolDef, 0, len(tools))
 	for _, t := range tools {
-		defs = append(defs, store.ToolDef{
+		defs = append(defs, message.ToolDef{
 			Type: "function",
-			Function: store.FunctionDef{
+			Function: message.FunctionDef{
 				Name:        t.Name(),
 				Description: t.Description(),
 				Parameters:  t.Parameters(),
@@ -555,7 +532,7 @@ func (s *Session) processLoop() {
 		var thinkingText string
 		var toolCalls []toolCall
 		var streamErr error
-		var streamUsage *store.Usage
+		var streamUsage *message.Usage
 
 		var stallRetries int
 
@@ -700,7 +677,7 @@ func (s *Session) processLoop() {
 			Timestamp: time.Now(),
 		}
 		for _, tc := range toolCalls {
-			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, store.ToolCall{
+			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, message.ToolCall{
 				ID:   tc.ID,
 				Type: "function",
 				Function: struct {
@@ -718,11 +695,11 @@ func (s *Session) processLoop() {
 			s.id,
 			string(store.RoleAssistant),
 			assistantText,
-			store.MarshalToolCalls(assistantMsg.ToolCalls),
+			message.MarshalToolCalls(assistantMsg.ToolCalls),
 			"", "",
 			thinkingText,
 			s.model,
-			store.MarshalUsage(streamUsage),
+			message.MarshalUsage(streamUsage),
 		)
 		if err != nil {
 			logger.L().Error("failed to persist assistant message", "session_id", s.id, "error", err)
@@ -899,13 +876,13 @@ type toolCall struct {
 	Args string
 }
 
-func buildToolDefs() []store.ToolDef {
+func buildToolDefs() []message.ToolDef {
 	tools := tool.All()
-	defs := make([]store.ToolDef, 0, len(tools))
+	defs := make([]message.ToolDef, 0, len(tools))
 	for _, t := range tools {
-		defs = append(defs, store.ToolDef{
+		defs = append(defs, message.ToolDef{
 			Type: "function",
-			Function: store.FunctionDef{
+			Function: message.FunctionDef{
 				Name:        t.Name(),
 				Description: t.Description(),
 				Parameters:  t.Parameters(),

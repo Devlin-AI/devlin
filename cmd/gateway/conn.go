@@ -138,8 +138,8 @@ func (cs *connState) handleListSessions(msg protocol.InboundMessage) {
 			ID:        sm.ID,
 			Channel:   sm.Channel,
 			Mode:      sm.Mode,
-			CreatedAt: sm.CreatedAt,
-			UpdatedAt: sm.UpdatedAt,
+			CreatedAt: sm.CreatedAt.Unix(),
+			UpdatedAt: sm.UpdatedAt.Unix(),
 		}
 	}
 	cs.send(protocol.OutboundMessage{

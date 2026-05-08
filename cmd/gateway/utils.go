@@ -3,8 +3,9 @@ package main
 import (
 	"encoding/json"
 
-	"github.com/devlin-ai/devlin/internal/protocol"
 	"github.com/devlin-ai/devlin/internal/logger"
+	"github.com/devlin-ai/devlin/internal/message"
+	"github.com/devlin-ai/devlin/internal/protocol"
 	"github.com/devlin-ai/devlin/internal/store"
 )
 
@@ -74,8 +75,8 @@ func (cs *connState) handleHistory(msg protocol.InboundMessage) {
 	toolCallArgs := make(map[string]string)
 	for _, m := range msgs {
 		if m.Role == "assistant" {
-			var calls []store.ToolCall
-			json.Unmarshal([]byte(m.ToolCalls), &calls)
+			var calls []message.ToolCall
+			json.Unmarshal(m.ToolCallsJSON, &calls)
 			for _, tc := range calls {
 				toolCallArgs[tc.ID] = tc.Function.Arguments
 			}
@@ -85,9 +86,9 @@ func (cs *connState) handleHistory(msg protocol.InboundMessage) {
 	histMsgs := make([]protocol.HistoryMessage, 0, len(msgs))
 	for _, m := range msgs {
 		var toolCallsJSON string
-		if m.ToolCalls != "" {
-			var calls []store.ToolCall
-			if err := json.Unmarshal([]byte(m.ToolCalls), &calls); err == nil {
+		if len(m.ToolCallsJSON) > 0 {
+			var calls []message.ToolCall
+			if err := json.Unmarshal(m.ToolCallsJSON, &calls); err == nil {
 				if b, err := json.Marshal(calls); err == nil {
 					toolCallsJSON = string(b)
 				}
