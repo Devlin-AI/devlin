@@ -22,24 +22,6 @@ import (
 
 // --- Session wrapper (service layer over store) ---
 
-type SessionMeta struct {
-	ID        string
-	Channel   string
-	Mode      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
-func FromStoreMeta(s store.SessionMeta) SessionMeta {
-	return SessionMeta{
-		ID:        s.ID,
-		Channel:   s.Channel,
-		Mode:      s.Mode,
-		CreatedAt: s.CreatedAt,
-		UpdatedAt: s.UpdatedAt,
-	}
-}
-
 func Create(db *store.Store, id, channel, mode string) error {
 	return db.CreateSession(id, channel, mode)
 }
