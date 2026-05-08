@@ -3,16 +3,17 @@ package main
 import (
 	"encoding/json"
 
+	"github.com/devlin-ai/devlin/internal/branch"
 	"github.com/devlin-ai/devlin/internal/logger"
 	"github.com/devlin-ai/devlin/internal/message"
 	"github.com/devlin-ai/devlin/internal/protocol"
-	"github.com/devlin-ai/devlin/internal/store"
+	"github.com/devlin-ai/devlin/internal/session"
 )
 
-func (cs *connState) branchInfos(metas []store.BranchMeta) []protocol.BranchInfo {
+func (cs *connState) branchInfos(metas []branch.BranchMeta) []protocol.BranchInfo {
 	infos := make([]protocol.BranchInfo, len(metas))
 	for i, m := range metas {
-		firstMsg, err := cs.store.GetFirstUserMessage(m.SessionID)
+		firstMsg, err := session.GetFirstUserMessage(cs.store, m.SessionID)
 		if err != nil {
 			logger.L().Error("get first user message failed", "session_id", m.SessionID, "error", err)
 		}
@@ -26,7 +27,7 @@ func (cs *connState) branchInfos(metas []store.BranchMeta) []protocol.BranchInfo
 }
 
 func (cs *connState) loadSiblingInfo(sessionID string) (*protocol.BranchInfo, []protocol.BranchInfo, int) {
-	currentMeta, err := cs.store.LoadBranchMeta(sessionID)
+	currentMeta, err := branch.LoadMeta(cs.store, sessionID)
 	if err != nil {
 		logger.L().Error("load branch meta failed", "session_id", sessionID, "error", err)
 		return nil, nil, 0
@@ -40,7 +41,7 @@ func (cs *connState) loadSiblingInfo(sessionID string) (*protocol.BranchInfo, []
 		ParentMsgID: currentMeta.ParentMsgID,
 	}
 
-	metas, err := cs.store.ListBranches(currentMeta.ParentID)
+	metas, err := branch.ListChildren(cs.store, currentMeta.ParentID)
 	if err != nil {
 		logger.L().Error("list parent branches failed", "parent_id", currentMeta.ParentID, "error", err)
 		return parent, nil, 0
@@ -65,7 +66,7 @@ func (cs *connState) handleHistory(msg protocol.InboundMessage) {
 	if targetID == "" {
 		targetID = cs.sess.ID()
 	}
-	msgs, err := cs.store.LoadFullHistory(targetID)
+	msgs, err := session.LoadFullHistory(cs.store, targetID)
 	if err != nil {
 		logger.L().Error("load history failed", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
@@ -74,10 +75,8 @@ func (cs *connState) handleHistory(msg protocol.InboundMessage) {
 
 	toolCallArgs := make(map[string]string)
 	for _, m := range msgs {
-		if m.Role == "assistant" {
-			var calls []message.ToolCall
-			json.Unmarshal(m.ToolCallsJSON, &calls)
-			for _, tc := range calls {
+		if m.Role == message.RoleAssistant {
+			for _, tc := range m.ToolCalls {
 				toolCallArgs[tc.ID] = tc.Function.Arguments
 			}
 		}
@@ -86,28 +85,25 @@ func (cs *connState) handleHistory(msg protocol.InboundMessage) {
 	histMsgs := make([]protocol.HistoryMessage, 0, len(msgs))
 	for _, m := range msgs {
 		var toolCallsJSON string
-		if len(m.ToolCallsJSON) > 0 {
-			var calls []message.ToolCall
-			if err := json.Unmarshal(m.ToolCallsJSON, &calls); err == nil {
-				if b, err := json.Marshal(calls); err == nil {
-					toolCallsJSON = string(b)
-				}
+		if len(m.ToolCalls) > 0 {
+			if b, err := json.Marshal(m.ToolCalls); err == nil {
+				toolCallsJSON = string(b)
 			}
 		}
 		hm := protocol.HistoryMessage{
 			ID:        m.ID,
-			Role:      m.Role,
+			Role:      string(m.Role),
 			Content:   m.Content,
 			ToolName:  m.ToolName,
 			ToolCalls: toolCallsJSON,
 		}
-		if m.Role == "tool" {
+		if m.Role == message.RoleTool {
 			hm.ToolArgs = toolCallArgs[m.ToolCallID]
 		}
 		histMsgs = append(histMsgs, hm)
 	}
 
-	chain, err := cs.store.LoadBranchChain(targetID)
+	chain, err := branch.LoadChain(cs.store, targetID)
 	if err != nil {
 		logger.L().Error("load branch chain failed", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
@@ -123,7 +119,7 @@ func (cs *connState) handleHistory(msg protocol.InboundMessage) {
 
 	parent, siblings, siblingIdx := cs.loadSiblingInfo(targetID)
 
-	childMetas, err := cs.store.ListBranches(targetID)
+	childMetas, err := branch.ListChildren(cs.store, targetID)
 	if err != nil {
 		logger.L().Error("list child branches failed", "session_id", targetID, "error", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/devlin-ai/devlin/internal/branch"
 	"github.com/devlin-ai/devlin/internal/llm"
 	"github.com/devlin-ai/devlin/internal/logger"
 	"github.com/devlin-ai/devlin/internal/message"
@@ -18,6 +19,121 @@ import (
 	"github.com/devlin-ai/devlin/internal/tool"
 	"github.com/google/uuid"
 )
+
+// --- Session wrapper (service layer over store) ---
+
+type SessionMeta struct {
+	ID        string
+	Channel   string
+	Mode      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func FromStoreMeta(s store.SessionMeta) SessionMeta {
+	return SessionMeta{
+		ID:        s.ID,
+		Channel:   s.Channel,
+		Mode:      s.Mode,
+		CreatedAt: s.CreatedAt,
+		UpdatedAt: s.UpdatedAt,
+	}
+}
+
+func Create(db *store.Store, id, channel, mode string) error {
+	return db.CreateSession(id, channel, mode)
+}
+
+func Touch(db *store.Store, id string) error {
+	return db.TouchSession(id)
+}
+
+func Exists(db *store.Store, id string) (bool, error) {
+	return db.SessionExists(id)
+}
+
+func Get(db *store.Store, id string) (*SessionMeta, error) {
+	s, err := db.GetSession(id)
+	if err != nil {
+		return nil, fmt.Errorf("get session: %w", err)
+	}
+	if s == nil {
+		return nil, nil
+	}
+	meta := FromStoreMeta(*s)
+	return &meta, nil
+}
+
+func GetLast(db *store.Store, channel, mode string) (string, error) {
+	return db.GetLastSession(channel, mode)
+}
+
+func List(db *store.Store, channel string) ([]SessionMeta, error) {
+	raw, err := db.ListSessions(channel)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	result := make([]SessionMeta, len(raw))
+	for i, s := range raw {
+		result[i] = FromStoreMeta(s)
+	}
+	return result, nil
+}
+
+func PersistMessage(db *store.Store, sessionID string, role string, content string, toolCallsJSON []byte, toolCallID string, toolName string, thinking string, model string, usageJSON []byte) (int64, error) {
+	return db.PersistMessage(sessionID, role, content, toolCallsJSON, toolCallID, toolName, thinking, model, usageJSON)
+}
+
+func LoadMessagesForSession(db *store.Store, sessionID string) ([]message.Message, error) {
+	raw, err := db.LoadMessagesForSession(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("load messages for session: %w", err)
+	}
+	result := make([]message.Message, len(raw))
+	for i, m := range raw {
+		result[i] = message.FromStore(m)
+	}
+	return result, nil
+}
+
+func LoadMessagesUpToID(db *store.Store, sessionID string, upToMsgID int64) ([]message.Message, error) {
+	raw, err := db.LoadMessagesUpToID(sessionID, upToMsgID)
+	if err != nil {
+		return nil, fmt.Errorf("load messages up to id: %w", err)
+	}
+	result := make([]message.Message, len(raw))
+	for i, m := range raw {
+		result[i] = message.FromStore(m)
+	}
+	return result, nil
+}
+
+func GetFirstUserMessage(db *store.Store, sessionID string) (string, error) {
+	return db.GetFirstUserMessage(sessionID)
+}
+
+func LoadFullHistory(db *store.Store, sessionID string) ([]message.Message, error) {
+	msgs, err := LoadMessagesForSession(db, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("load messages for %s: %w", sessionID, err)
+	}
+	allMsgs := msgs
+
+	err = branch.WalkUp(db, sessionID, func(meta branch.BranchMeta) error {
+		parentMsgs, err := LoadMessagesUpToID(db, meta.ParentID, meta.ParentMsgID)
+		if err != nil {
+			return fmt.Errorf("load messages up to id for %s: %w", meta.ParentID, err)
+		}
+		allMsgs = append(parentMsgs, allMsgs...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return allMsgs, nil
+}
+
+// --- Session service ---
 
 var defaultMaxDepth int
 
@@ -49,7 +165,7 @@ type Session struct {
 func New(provider llm.Provider, db *store.Store, ch string, mode string, model string, onEvent func(Event)) (*Session, error) {
 	id := uuid.New().String()
 
-	if err := db.CreateSession(id, ch, mode); err != nil {
+	if err := Create(db, id, ch, mode); err != nil {
 		return nil, err
 	}
 
@@ -68,11 +184,11 @@ func New(provider llm.Provider, db *store.Store, ch string, mode string, model s
 	}
 	s.emitter = s
 
-	if _, err := s.store.PersistMessage(id, "tool_defs", string(message.MarshalToolDefs(buildToolDefs())), nil, "", "", "", "", nil); err != nil {
+	if _, err := PersistMessage(db, id, "tool_defs", string(message.MarshalToolDefs(buildToolDefs())), nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist tool_defs", "session_id", id, "error", err)
 	}
 
-	if _, err := s.store.PersistMessage(id, "system_prompt", sysPrompt, nil, "", "", "", "", nil); err != nil {
+	if _, err := PersistMessage(db, id, "system_prompt", sysPrompt, nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist system_prompt", "session_id", id, "error", err)
 	}
 
@@ -80,16 +196,12 @@ func New(provider llm.Provider, db *store.Store, ch string, mode string, model s
 }
 
 func Load(provider llm.Provider, db *store.Store, sessionID string, model string, onEvent func(Event)) (*Session, error) {
-	rawHistory, err := db.LoadFullHistory(sessionID)
+	history, err := LoadFullHistory(db, sessionID)
 	if err != nil {
 		return nil, err
 	}
-	history := make([]message.Message, len(rawHistory))
-	for i, m := range rawHistory {
-		history[i] = message.FromStore(m)
-	}
 
-	meta, err := db.LoadBranchMeta(sessionID)
+	meta, err := branch.LoadMeta(db, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +213,7 @@ func Load(provider llm.Provider, db *store.Store, sessionID string, model string
 		branchPoint = meta.ParentMsgID
 	}
 
-	depth, err := db.ComputeDepth(sessionID)
+	depth, err := branch.ComputeDepth(db, sessionID)
 	if err != nil {
 		logger.L().Warn("failed to compute depth", "session_id", sessionID, "error", err)
 		depth = 0
@@ -124,7 +236,7 @@ func Load(provider llm.Provider, db *store.Store, sessionID string, model string
 	}
 	s.emitter = s
 
-	sess, err := db.GetSession(sessionID)
+	sess, err := Get(db, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("load session meta: %w", err)
 	}
@@ -187,25 +299,20 @@ func (s *Session) Branch(msgID int64) (*Session, error) {
 
 	branchID := uuid.New().String()
 
-	if err := s.store.CreateSession(branchID, s.channel, s.mode); err != nil {
+	if err := Create(s.store, branchID, s.channel, s.mode); err != nil {
 		return nil, err
 	}
 
-	if err := s.store.CreateBranch(branchID, s.id, msgID); err != nil {
+	if err := branch.Create(s.store, branchID, s.id, msgID); err != nil {
 		return nil, err
 	}
 
-	rawHistory, err := s.store.LoadMessagesUpToID(s.id, msgID)
+	historyCopy, err := LoadMessagesUpToID(s.store, s.id, msgID)
 	if err != nil {
 		return nil, err
 	}
 
-	historyCopy := make([]message.Message, len(rawHistory))
-	for i, m := range rawHistory {
-		historyCopy[i] = message.FromStore(m)
-	}
-
-	branch := &Session{
+	br := &Session{
 		id:           branchID,
 		channel:      s.channel,
 		mode:         s.mode,
@@ -219,14 +326,14 @@ func (s *Session) Branch(msgID int64) (*Session, error) {
 		branchPoint:  msgID,
 	}
 
-	return branch, nil
+	return br, nil
 }
 
 func (s *Session) SwitchTo(sessionID string) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	exists, err := s.store.SessionExists(sessionID)
+	exists, err := Exists(s.store, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -234,16 +341,12 @@ func (s *Session) SwitchTo(sessionID string) (*Session, error) {
 		return nil, fmt.Errorf("session %s not found", sessionID)
 	}
 
-	rawHistory, err := s.store.LoadFullHistory(sessionID)
+	history, err := LoadFullHistory(s.store, sessionID)
 	if err != nil {
 		return nil, err
 	}
-	history := make([]message.Message, len(rawHistory))
-	for i, m := range rawHistory {
-		history[i] = message.FromStore(m)
-	}
 
-	meta, err := s.store.LoadBranchMeta(sessionID)
+	meta, err := branch.LoadMeta(s.store, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -272,12 +375,12 @@ func (s *Session) SwitchTo(sessionID string) (*Session, error) {
 	return target, nil
 }
 
-func (s *Session) ListBranches() ([]store.BranchMeta, error) {
-	return s.store.ListBranches(s.id)
+func (s *Session) ListBranches() ([]branch.BranchMeta, error) {
+	return branch.ListChildren(s.store, s.id)
 }
 
-func (s *Session) GetParentBranch() (*store.BranchMeta, error) {
-	return s.store.GetParentBranch(s.id)
+func (s *Session) GetParentBranch() (*branch.BranchMeta, error) {
+	return branch.GetParent(s.store, s.id)
 }
 
 func (s *Session) MaxDepth() int {
@@ -295,11 +398,11 @@ func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt str
 
 	childID := uuid.New().String()
 
-	if err := s.store.CreateSession(childID, s.channel, s.mode); err != nil {
+	if err := Create(s.store, childID, s.channel, s.mode); err != nil {
 		return "", fmt.Errorf("create subagent session: %w", err)
 	}
 
-	if err := s.store.CreateBranch(childID, s.id, 0); err != nil {
+	if err := branch.Create(s.store, childID, s.id, 0); err != nil {
 		return "", fmt.Errorf("create subagent branch: %w", err)
 	}
 
@@ -324,18 +427,18 @@ func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt str
 	}
 	child.emitter = subEmitter
 
-	if _, err := s.store.PersistMessage(childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
+	if _, err := PersistMessage(s.store, childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist subagent tool_defs", "session_id", childID, "error", err)
 	}
 
-	if _, err := s.store.PersistMessage(childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
+	if _, err := PersistMessage(s.store, childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist subagent system_prompt", "session_id", childID, "error", err)
 	}
 
 	child.ProcessMessage(taskPrompt)
 
 	for i := len(child.history) - 1; i >= 0; i-- {
-		if child.history[i].Role == store.RoleAssistant {
+		if child.history[i].Role == message.RoleAssistant {
 			return child.history[i].Content, nil
 		}
 	}
@@ -350,11 +453,11 @@ func (s *Session) SpawnSubagentAsync(ctx context.Context, description, taskPromp
 
 	childID := uuid.New().String()
 
-	if err := s.store.CreateSession(childID, s.channel, s.mode); err != nil {
+	if err := Create(s.store, childID, s.channel, s.mode); err != nil {
 		return "", fmt.Errorf("create subagent session: %w", err)
 	}
 
-	if err := s.store.CreateBranch(childID, s.id, 0); err != nil {
+	if err := branch.Create(s.store, childID, s.id, 0); err != nil {
 		return "", fmt.Errorf("create subagent branch: %w", err)
 	}
 
@@ -378,11 +481,11 @@ func (s *Session) SpawnSubagentAsync(ctx context.Context, description, taskPromp
 	}
 	child.emitter = subEmitter
 
-	if _, err := s.store.PersistMessage(childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
+	if _, err := PersistMessage(s.store, childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist subagent tool_defs", "session_id", childID, "error", err)
 	}
 
-	if _, err := s.store.PersistMessage(childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
+	if _, err := PersistMessage(s.store, childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist subagent system_prompt", "session_id", childID, "error", err)
 	}
 
@@ -408,7 +511,7 @@ func (s *Session) getLastAssistantResponse() string {
 	s.historyMu.Lock()
 	defer s.historyMu.Unlock()
 	for i := len(s.history) - 1; i >= 0; i-- {
-		if s.history[i].Role == store.RoleAssistant {
+		if s.history[i].Role == message.RoleAssistant {
 			return s.history[i].Content
 		}
 	}
@@ -447,11 +550,11 @@ func (s *Session) ProcessMessage(content string) {
 	defer s.mu.Unlock()
 
 	s.history = append(s.history, message.Message{
-		Role:      store.RoleUser,
+		Role:      message.RoleUser,
 		Content:   content,
 		Timestamp: time.Now(),
 	})
-	if _, err := s.store.PersistMessage(s.id, string(store.RoleUser), content, nil, "", "", "", "", nil); err != nil {
+	if _, err := PersistMessage(s.store, s.id, string(message.RoleUser), content, nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist user message", "session_id", s.id, "error", err)
 	}
 
@@ -510,7 +613,7 @@ func (s *Session) processLoop() {
 		newPrompt := prompt.Build(cwd, tool.All())
 		if newPrompt != s.systemPrompt {
 			s.systemPrompt = newPrompt
-			if _, err := s.store.PersistMessage(s.id, "system_prompt", newPrompt, nil, "", "", "", "", nil); err != nil {
+			if _, err := PersistMessage(s.store, s.id, "system_prompt", newPrompt, nil, "", "", "", "", nil); err != nil {
 				logger.L().Error("failed to persist system_prompt", "session_id", s.id, "error", err)
 			}
 		}
@@ -576,19 +679,19 @@ func (s *Session) processLoop() {
 			var tokensReceived bool
 			for evt := range ch {
 	switch evt.Type {
-		case store.StreamEventToken:
+		case message.StreamEventToken:
 			assistantText += evt.Token
 			s.emitter.SendEvent(Event{Type: "token", Content: evt.Token})
 			tokensReceived = true
-		case store.StreamEventThinking:
+		case message.StreamEventThinking:
 			thinkingText += evt.Token
 			s.emitter.SendEvent(Event{Type: "thinking", Content: evt.Token})
 			tokensReceived = true
-		case store.StreamEventDone:
+		case message.StreamEventDone:
 			if evt.Usage != nil {
 				streamUsage = evt.Usage
 			}
-		case store.StreamEventToolStart:
+		case message.StreamEventToolStart:
 					if evt.ToolID != "" {
 						if len(toolCalls) > 0 {
 							s.emitter.SendToolStart(toolCalls[len(toolCalls)-1])
@@ -601,7 +704,7 @@ func (s *Session) processLoop() {
 					} else if len(toolCalls) > 0 {
 						toolCalls[len(toolCalls)-1].Args += evt.Token
 					}
-				case store.StreamEventError:
+				case message.StreamEventError:
 					if ctx.Err() != nil {
 						s.emitter.SendEvent(Event{Type: "cancelled"})
 						s.history = s.history[:len(s.history)-1]
@@ -672,7 +775,7 @@ func (s *Session) processLoop() {
 		}
 
 		assistantMsg := message.Message{
-			Role:      store.RoleAssistant,
+			Role:      message.RoleAssistant,
 			Content:   assistantText,
 			Timestamp: time.Now(),
 		}
@@ -691,9 +794,10 @@ func (s *Session) processLoop() {
 		}
 
 		s.history = append(s.history, assistantMsg)
-		assistantMsgID, err := s.store.PersistMessage(
+		assistantMsgID, err := PersistMessage(
+			s.store,
 			s.id,
-			string(store.RoleAssistant),
+			string(message.RoleAssistant),
 			assistantText,
 			message.MarshalToolCalls(assistantMsg.ToolCalls),
 			"", "",
@@ -849,7 +953,7 @@ func (s *Session) completeToolCall(tc toolCall, output string, disp tool.ToolDis
 	})
 
 	toolMsg := message.Message{
-		Role:       store.RoleTool,
+		Role:       message.RoleTool,
 		Content:    output,
 		ToolCallID: tc.ID,
 		Timestamp:  time.Now(),
@@ -857,9 +961,10 @@ func (s *Session) completeToolCall(tc toolCall, output string, disp tool.ToolDis
 	s.historyMu.Lock()
 	s.history = append(s.history, toolMsg)
 	s.historyMu.Unlock()
-	if _, err := s.store.PersistMessage(
+	if _, err := PersistMessage(
+		s.store,
 		s.id,
-		string(store.RoleTool),
+		string(message.RoleTool),
 		output,
 		nil,
 		tc.ID,

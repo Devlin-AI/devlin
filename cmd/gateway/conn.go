@@ -45,7 +45,7 @@ func (cs *connState) handleNew(msg protocol.InboundMessage) {
 }
 
 func (cs *connState) handleContinue(msg protocol.InboundMessage) {
-	lastID, err := cs.store.GetLastSession(msg.Channel, msg.Mode)
+	lastID, err := session.GetLast(cs.store, msg.Channel, msg.Mode)
 	if err != nil {
 		logger.L().Error("failed to get last session", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
@@ -126,7 +126,7 @@ func (cs *connState) handleListSessions(msg protocol.InboundMessage) {
 		cs.send(protocol.OutboundMessage{Type: "session_list"})
 		return
 	}
-	sessionMetas, err := cs.store.ListSessions(ch)
+	sessionMetas, err := session.List(cs.store, ch)
 	if err != nil {
 		logger.L().Error("list sessions failed", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})

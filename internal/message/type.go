@@ -1,4 +1,4 @@
-package store
+package message
 
 type Role string
 
