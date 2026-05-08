@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -57,7 +56,7 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) CreateSession(id, channel, mode string) error {
-	now := time.Now().Unix()
+	now := time.Now()
 	return s.r.insertSession(&SessionMeta{
 		ID:        id,
 		Channel:   channel,
@@ -242,28 +241,4 @@ func (s *Store) ComputeDepth(sessionID string) (int, error) {
 
 func (s *Store) GetParentBranch(sessionID string) (*BranchMeta, error) {
 	return s.r.getBranch(sessionID)
-}
-
-func MarshalToolCalls(v interface{}) []byte {
-	if v == nil {
-		return nil
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		logger.L().Error("failed to marshal tool calls", "error", err)
-		return nil
-	}
-	return b
-}
-
-func MarshalUsage(v interface{}) []byte {
-	if v == nil {
-		return nil
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		logger.L().Error("failed to marshal usage", "error", err)
-		return nil
-	}
-	return b
 }

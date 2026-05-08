@@ -1,5 +1,7 @@
 package store
 
+import "time"
+
 type BranchMeta struct {
 	SessionID   string
 	ParentID    string
@@ -10,20 +12,20 @@ type SessionMeta struct {
 	ID        string
 	Channel   string
 	Mode      string
-	CreatedAt int64
-	UpdatedAt int64
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type Message struct {
-	ID         int64
-	SessionID  string
-	Role       string
-	Content    string
-	ToolCalls  string
-	ToolCallID string
-	ToolName   string
-	Thinking   string
-	Model      string
-	Usage      string
-	Timestamp  float64
+	ID             int64
+	SessionID      string
+	Role           string
+	Content        string
+	ToolCallsJSON  []byte
+	ToolCallID     string
+	ToolName       string
+	Thinking       string
+	Model          string
+	UsageJSON      []byte
+	Timestamp      time.Time
 }

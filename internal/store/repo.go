@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type repo struct {
@@ -55,7 +56,7 @@ func (r *repo) migrate() error {
 func (r *repo) insertSession(s *SessionMeta) error {
 	_, err := r.db.Exec(
 		"INSERT INTO sessions (id, channel, mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-		s.ID, s.Channel, s.Mode, s.CreatedAt, s.UpdatedAt,
+		s.ID, s.Channel, s.Mode, s.CreatedAt.Unix(), s.UpdatedAt.Unix(),
 	)
 	return err
 }
@@ -66,12 +67,15 @@ func (r *repo) getSession(id string) (*SessionMeta, error) {
 		id,
 	)
 	var s SessionMeta
-	if err := row.Scan(&s.ID, &s.Channel, &s.Mode, &s.CreatedAt, &s.UpdatedAt); err != nil {
+	var createdSec, updatedSec float64
+	if err := row.Scan(&s.ID, &s.Channel, &s.Mode, &createdSec, &updatedSec); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, err
 	}
+	s.CreatedAt = time.Unix(int64(createdSec), 0)
+	s.UpdatedAt = time.Unix(int64(updatedSec), 0)
 	return &s, nil
 }
 
@@ -121,19 +125,22 @@ func (r *repo) findSessions(channel, mode string, limit int) ([]SessionMeta, err
 	var sessions []SessionMeta
 	for rows.Next() {
 		var s SessionMeta
-		if err := rows.Scan(&s.ID, &s.Channel, &s.Mode, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		var createdSec, updatedSec float64
+		if err := rows.Scan(&s.ID, &s.Channel, &s.Mode, &createdSec, &updatedSec); err != nil {
 			return nil, err
 		}
+		s.CreatedAt = time.Unix(int64(createdSec), 0)
+		s.UpdatedAt = time.Unix(int64(updatedSec), 0)
 		sessions = append(sessions, s)
 	}
 	return sessions, rows.Err()
 }
 
-func (r *repo) insertMessage(sessionID, role, content string, toolCalls []byte, toolCallID, toolName, thinking, model string, usage []byte, ts float64) (int64, error) {
+func (r *repo) insertMessage(sessionID, role, content string, toolCallsJSON []byte, toolCallID, toolName, thinking, model string, usageJSON []byte, ts float64) (int64, error) {
 	result, err := r.db.Exec(
 		`INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, tool_name, thinking, model, usage, timestamp)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sessionID, role, content, toolCalls, toolCallID, toolName, thinking, model, usage, ts,
+		sessionID, role, content, toolCallsJSON, toolCallID, toolName, thinking, model, usageJSON, ts,
 	)
 	if err != nil {
 		return 0, err
@@ -147,7 +154,7 @@ func (r *repo) getMessage(id int64) (*Message, error) {
 		id,
 	)
 	var msg Message
-	if err := row.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.ToolCalls, &msg.ToolCallID, &msg.ToolName, &msg.Thinking); err != nil {
+	if err := row.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.ToolCallsJSON, &msg.ToolCallID, &msg.ToolName, &msg.Thinking); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -214,7 +221,7 @@ func (r *repo) findMessages(sessionID string, upToID int64, excludeRoles []strin
 	var msgs []Message
 	for rows.Next() {
 		var msg Message
-		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.ToolCalls, &msg.ToolCallID, &msg.ToolName, &msg.Thinking); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.ToolCallsJSON, &msg.ToolCallID, &msg.ToolName, &msg.Thinking); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, msg)
