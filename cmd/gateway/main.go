@@ -9,11 +9,11 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/devlin-ai/devlin/internal/agent"
 	"github.com/devlin-ai/devlin/internal/config"
 	"github.com/devlin-ai/devlin/internal/llm"
 	"github.com/devlin-ai/devlin/internal/logger"
 	"github.com/devlin-ai/devlin/internal/process"
-	"github.com/devlin-ai/devlin/internal/session"
 	"github.com/devlin-ai/devlin/internal/store"
 
 	_ "github.com/devlin-ai/devlin/internal/tool"
@@ -57,7 +57,7 @@ func setupGateway() (llm.Provider, *store.Store, string, int, error) {
 
 	llm.SetDefaultStallTimeout(cfg.LLM.StallTimeoutDuration())
 	process.SetDefaultBackgroundTimeout(cfg.Session.BackgroundTimeoutDuration())
-	session.SetDefaultMaxDepth(cfg.Session.MaxDepth)
+	agent.SetDefaultMaxDepth(cfg.Session.MaxDepth)
 
 	return provider, store, modelName, cfg.Gateway.Port, nil
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sync"
 
+	"github.com/devlin-ai/devlin/internal/agent"
 	"github.com/devlin-ai/devlin/internal/protocol"
 	"github.com/devlin-ai/devlin/internal/llm"
 	"github.com/devlin-ai/devlin/internal/logger"
@@ -15,7 +16,7 @@ import (
 type connState struct {
 	conn     *websocket.Conn
 	writeMu  sync.Mutex
-	sess     *session.Session
+	sess     *agent.Session
 	store    *store.Store
 	provider llm.Provider
 	model    string
@@ -29,7 +30,7 @@ func (cs *connState) send(msg protocol.OutboundMessage) {
 }
 
 func (cs *connState) handleNew(msg protocol.InboundMessage) {
-	sess, err := session.New(cs.provider, cs.store, msg.Channel, msg.Mode, cs.model, cs.send)
+	sess, err := agent.New(cs.provider, cs.store, msg.Channel, msg.Mode, cs.model, cs.send)
 	if err != nil {
 		logger.L().Error("failed to create session", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
@@ -57,7 +58,7 @@ func (cs *connState) handleContinue(msg protocol.InboundMessage) {
 		return
 	}
 
-	sess, err := session.Load(cs.provider, cs.store, lastID, cs.model, cs.send)
+	sess, err := agent.Load(cs.provider, cs.store, lastID, cs.model, cs.send)
 	if err != nil {
 		logger.L().Error("failed to load session", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
