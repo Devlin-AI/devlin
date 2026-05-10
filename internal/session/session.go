@@ -25,11 +25,7 @@ func Get(db *store.Store, id string) (*SessionMeta, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get session: %w", err)
 	}
-	if s == nil {
-		return nil, nil
-	}
-	meta := FromStoreMeta(*s)
-	return &meta, nil
+	return s, nil
 }
 
 func GetLast(db *store.Store, channel, mode string) (string, error) {
@@ -43,7 +39,7 @@ func List(db *store.Store, channel string) ([]SessionMeta, error) {
 	}
 	result := make([]SessionMeta, len(raw))
 	for i, s := range raw {
-		result[i] = FromStoreMeta(s)
+		result[i] = s
 	}
 	return result, nil
 }

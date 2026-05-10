@@ -18,8 +18,7 @@ func LoadMeta(db *store.Store, sessionID string) (*BranchMeta, error) {
 	if b == nil {
 		return nil, nil
 	}
-	meta := FromStore(*b)
-	return &meta, nil
+	return b, nil
 }
 
 func ListChildren(db *store.Store, parentID string) ([]BranchMeta, error) {
@@ -29,7 +28,7 @@ func ListChildren(db *store.Store, parentID string) ([]BranchMeta, error) {
 	}
 	result := make([]BranchMeta, len(raw))
 	for i, b := range raw {
-		result[i] = FromStore(b)
+		result[i] = b
 	}
 	return result, nil
 }
@@ -63,11 +62,7 @@ func GetParent(db *store.Store, sessionID string) (*BranchMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-	if b == nil {
-		return nil, nil
-	}
-	meta := FromStore(*b)
-	return &meta, nil
+	return b, nil
 }
 
 func WalkUp(db *store.Store, sessionID string, fn func(BranchMeta) error) error {
@@ -80,7 +75,7 @@ func WalkUp(db *store.Store, sessionID string, fn func(BranchMeta) error) error 
 		if meta == nil {
 			break
 		}
-		if err := fn(FromStore(*meta)); err != nil {
+		if err := fn(*meta); err != nil {
 			return err
 		}
 		currentID = meta.ParentID
