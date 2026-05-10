@@ -34,11 +34,7 @@ func ListChildren(db *store.Store, parentID string) ([]BranchMeta, error) {
 }
 
 func LoadChain(db *store.Store, sessionID string) ([]BranchMeta, error) {
-	var chain []BranchMeta
-	err := WalkUp(db, sessionID, func(meta BranchMeta) error {
-		chain = append(chain, meta)
-		return nil
-	})
+	chain, err := db.LoadBranchChain(sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -49,36 +45,10 @@ func LoadChain(db *store.Store, sessionID string) ([]BranchMeta, error) {
 }
 
 func ComputeDepth(db *store.Store, sessionID string) (int, error) {
-	depth := 0
-	err := WalkUp(db, sessionID, func(meta BranchMeta) error {
-		depth++
-		return nil
-	})
-	return depth, err
+	chain, err := LoadChain(db, sessionID)
+	return len(chain), err
 }
 
 func GetParent(db *store.Store, sessionID string) (*BranchMeta, error) {
-	b, err := db.LoadBranchMeta(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	return b, nil
-}
-
-func WalkUp(db *store.Store, sessionID string, fn func(BranchMeta) error) error {
-	currentID := sessionID
-	for currentID != "" {
-		meta, err := db.LoadBranchMeta(currentID)
-		if err != nil {
-			return fmt.Errorf("load branch meta for %s: %w", currentID, err)
-		}
-		if meta == nil {
-			break
-		}
-		if err := fn(*meta); err != nil {
-			return err
-		}
-		currentID = meta.ParentID
-	}
-	return nil
+	return db.LoadBranchMeta(sessionID)
 }

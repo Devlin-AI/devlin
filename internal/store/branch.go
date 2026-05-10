@@ -58,6 +58,32 @@ func (r *repo) deleteBranch(sessionID string) error {
 	return err
 }
 
+func (r *repo) findBranchChain(sessionID string) ([]BranchMeta, error) {
+	rows, err := r.db.Query(`
+		WITH RECURSIVE chain AS (
+			SELECT session_id, parent_id, parent_msg_id FROM branches WHERE session_id = ?
+			UNION ALL
+			SELECT b.session_id, b.parent_id, b.parent_msg_id
+			FROM branches b INNER JOIN chain c ON b.session_id = c.parent_id
+		)
+		SELECT session_id, parent_id, parent_msg_id FROM chain
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var chain []BranchMeta
+	for rows.Next() {
+		var b BranchMeta
+		if err := rows.Scan(&b.SessionID, &b.ParentID, &b.ParentMsgID); err != nil {
+			return nil, err
+		}
+		chain = append(chain, b)
+	}
+	return chain, rows.Err()
+}
+
 func (r *repo) findBranches(parentID string) ([]BranchMeta, error) {
 	rows, err := r.db.Query(
 		"SELECT session_id, parent_id, parent_msg_id FROM branches WHERE parent_id = ?",

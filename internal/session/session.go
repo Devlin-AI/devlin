@@ -83,16 +83,17 @@ func LoadFullHistory(db *store.Store, sessionID string) ([]message.Message, erro
 	}
 	allMsgs := msgs
 
-	err = branch.WalkUp(db, sessionID, func(meta branch.BranchMeta) error {
-		parentMsgs, err := LoadMessagesUpToID(db, meta.ParentID, meta.ParentMsgID)
-		if err != nil {
-			return fmt.Errorf("load messages up to id for %s: %w", meta.ParentID, err)
-		}
-		allMsgs = append(parentMsgs, allMsgs...)
-		return nil
-	})
+	chain, err := branch.LoadChain(db, sessionID)
 	if err != nil {
 		return nil, err
+	}
+	for i := len(chain) - 1; i >= 0; i-- {
+		meta := chain[i]
+		parentMsgs, err := LoadMessagesUpToID(db, meta.ParentID, meta.ParentMsgID)
+		if err != nil {
+			return nil, fmt.Errorf("load messages up to id for %s: %w", meta.ParentID, err)
+		}
+		allMsgs = append(parentMsgs, allMsgs...)
 	}
 	return allMsgs, nil
 }

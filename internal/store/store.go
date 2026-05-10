@@ -167,3 +167,11 @@ func (s *Store) ListBranches(sessionID string) ([]BranchMeta, error) {
 	}
 	return branches, nil
 }
+
+func (s *Store) LoadBranchChain(sessionID string) ([]BranchMeta, error) {
+	chain, err := s.r.findBranchChain(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("load branch chain: %w", err)
+	}
+	return chain, nil
+}
