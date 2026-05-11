@@ -31,6 +31,19 @@ type toolCall struct {
 	Args string
 }
 
+type streamResult struct {
+	assistantText string
+	thinkingText  string
+	toolCalls     []toolCall
+	usage         *message.Usage
+
+	isStall         bool
+	isProviderError bool
+	errorStr        string
+	statusCode      int
+	hasPartial      bool
+}
+
 var defaultMaxDepth int
 
 func SetDefaultMaxDepth(d int) {
@@ -57,6 +70,7 @@ type Session struct {
 	depth        int
 	emitter      EventEmitter
 	parentCtx    context.Context
+	cwd          string
 }
 
 func New(provider llm.Provider, db *store.Store, ch string, mode string, model string, onEvent func(Event)) (*Session, error) {
@@ -78,6 +92,7 @@ func New(provider llm.Provider, db *store.Store, ch string, mode string, model s
 		model:        model,
 		systemPrompt: sysPrompt,
 		onEvent:      onEvent,
+		cwd:          cwd,
 	}
 	s.emitter = s
 
@@ -130,6 +145,7 @@ func Load(provider llm.Provider, db *store.Store, sessionID string, model string
 		parentID:     parentID,
 		branchPoint:  branchPoint,
 		depth:        depth,
+		cwd:          cwd,
 	}
 	s.emitter = s
 
