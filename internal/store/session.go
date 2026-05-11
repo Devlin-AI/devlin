@@ -7,54 +7,67 @@ import (
 	"time"
 )
 
-func (r *repo) insertSession(s *SessionMeta) error {
-	_, err := r.db.Exec(
+func (s *Store) CreateSession(id, channel, mode string) error {
+	now := time.Now()
+	_, err := s.db.Exec(
 		"INSERT INTO sessions (id, channel, mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-		s.ID, s.Channel, s.Mode, s.CreatedAt.Unix(), s.UpdatedAt.Unix(),
+		id, channel, mode, now.Unix(), now.Unix(),
 	)
 	return err
 }
 
-func (r *repo) getSession(id string) (*SessionMeta, error) {
-	row := r.db.QueryRow(
+func (s *Store) GetSession(id string) (*SessionMeta, error) {
+	row := s.db.QueryRow(
 		"SELECT id, channel, mode, created_at, updated_at FROM sessions WHERE id = ?",
 		id,
 	)
-	var s SessionMeta
+	var sm SessionMeta
 	var createdSec, updatedSec float64
-	if err := row.Scan(&s.ID, &s.Channel, &s.Mode, &createdSec, &updatedSec); err != nil {
+	if err := row.Scan(&sm.ID, &sm.Channel, &sm.Mode, &createdSec, &updatedSec); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, err
 	}
-	s.CreatedAt = time.Unix(int64(createdSec), 0)
-	s.UpdatedAt = time.Unix(int64(updatedSec), 0)
-	return &s, nil
+	sm.CreatedAt = time.Unix(int64(createdSec), 0)
+	sm.UpdatedAt = time.Unix(int64(updatedSec), 0)
+	return &sm, nil
 }
 
-func (r *repo) updateSession(id string, fields map[string]any) error {
-	if len(fields) == 0 {
-		return nil
+func (s *Store) GetLastSession(channel, mode string) (string, error) {
+	sessions, err := s.listSessions(channel, mode, 1)
+	if err != nil {
+		return "", fmt.Errorf("get last session: %w", err)
 	}
-	var setClauses []string
-	var args []any
-	for k, v := range fields {
-		setClauses = append(setClauses, fmt.Sprintf("%s = ?", k))
-		args = append(args, v)
+	if len(sessions) == 0 {
+		return "", nil
 	}
-	args = append(args, id)
-	query := fmt.Sprintf("UPDATE sessions SET %s WHERE id = ?", strings.Join(setClauses, ", "))
-	_, err := r.db.Exec(query, args...)
+	return sessions[0].ID, nil
+}
+
+func (s *Store) ListSessions(channel string) ([]SessionMeta, error) {
+	sessions, err := s.listSessions(channel, "", 0)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	return sessions, nil
+}
+
+func (s *Store) SessionExists(id string) (bool, error) {
+	sess, err := s.GetSession(id)
+	if err != nil {
+		return false, err
+	}
+	return sess != nil, nil
+}
+
+func (s *Store) TouchSession(id string) error {
+	now := time.Now().Unix()
+	_, err := s.db.Exec("UPDATE sessions SET updated_at = ? WHERE id = ?", now, id)
 	return err
 }
 
-func (r *repo) deleteSession(id string) error {
-	_, err := r.db.Exec("DELETE FROM sessions WHERE id = ?", id)
-	return err
-}
-
-func (r *repo) findSessions(channel, mode string, limit int) ([]SessionMeta, error) {
+func (s *Store) listSessions(channel, mode string, limit int) ([]SessionMeta, error) {
 	query := "SELECT id, channel, mode, created_at, updated_at FROM sessions WHERE 1=1"
 	var args []any
 	if channel != "" {
@@ -70,7 +83,7 @@ func (r *repo) findSessions(channel, mode string, limit int) ([]SessionMeta, err
 		query += " LIMIT ?"
 		args = append(args, limit)
 	}
-	rows, err := r.db.Query(query, args...)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -78,14 +91,30 @@ func (r *repo) findSessions(channel, mode string, limit int) ([]SessionMeta, err
 
 	var sessions []SessionMeta
 	for rows.Next() {
-		var s SessionMeta
+		var sm SessionMeta
 		var createdSec, updatedSec float64
-		if err := rows.Scan(&s.ID, &s.Channel, &s.Mode, &createdSec, &updatedSec); err != nil {
+		if err := rows.Scan(&sm.ID, &sm.Channel, &sm.Mode, &createdSec, &updatedSec); err != nil {
 			return nil, err
 		}
-		s.CreatedAt = time.Unix(int64(createdSec), 0)
-		s.UpdatedAt = time.Unix(int64(updatedSec), 0)
-		sessions = append(sessions, s)
+		sm.CreatedAt = time.Unix(int64(createdSec), 0)
+		sm.UpdatedAt = time.Unix(int64(updatedSec), 0)
+		sessions = append(sessions, sm)
 	}
 	return sessions, rows.Err()
+}
+
+func (s *Store) updateSession(id string, fields map[string]any) error {
+	if len(fields) == 0 {
+		return nil
+	}
+	var setClauses []string
+	var args []any
+	for k, v := range fields {
+		setClauses = append(setClauses, fmt.Sprintf("%s = ?", k))
+		args = append(args, v)
+	}
+	args = append(args, id)
+	query := fmt.Sprintf("UPDATE sessions SET %s WHERE id = ?", strings.Join(setClauses, ", "))
+	_, err := s.db.Exec(query, args...)
+	return err
 }

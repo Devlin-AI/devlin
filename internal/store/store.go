@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
-	"github.com/devlin-ai/devlin/internal/logger"
 	_ "modernc.org/sqlite"
 )
 
 type Store struct {
-	r *repo
+	db *sql.DB
 }
 
 func NewStore(dbPath string) (*Store, error) {
@@ -25,13 +23,17 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, err
 	}
 
-	r := &repo{db: db}
-	if err := r.migrate(); err != nil {
+	s := &Store{db: db}
+	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
-	return &Store{r: r}, nil
+	return s, nil
+}
+
+func (s *Store) Close() error {
+	return s.db.Close()
 }
 
 func openDB(dbPath string) (*sql.DB, error) {
@@ -51,127 +53,44 @@ func openDB(dbPath string) (*sql.DB, error) {
 	return db, nil
 }
 
-func (s *Store) Close() error {
-	return s.r.db.Close()
-}
+func (s *Store) migrate() error {
+	_, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS sessions (
+			id TEXT PRIMARY KEY,
+			channel TEXT NOT NULL,
+			mode TEXT NOT NULL DEFAULT 'coding',
+			created_at REAL NOT NULL,
+			updated_at REAL NOT NULL
+		);
 
-func (s *Store) CreateSession(id, channel, mode string) error {
-	now := time.Now()
-	return s.r.insertSession(&SessionMeta{
-		ID:        id,
-		Channel:   channel,
-		Mode:      mode,
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-}
+		CREATE TABLE IF NOT EXISTS messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL REFERENCES sessions(id),
+			role TEXT NOT NULL,
+			content TEXT,
+			tool_calls TEXT,
+			tool_call_id TEXT,
+			tool_name TEXT,
+			thinking TEXT,
+			model TEXT,
+			usage TEXT,
+			timestamp REAL NOT NULL
+		);
 
-func (s *Store) TouchSession(id string) error {
-	now := time.Now().Unix()
-	return s.r.updateSession(id, map[string]any{"updated_at": now})
-}
+		CREATE TABLE IF NOT EXISTS branches (
+			session_id    TEXT PRIMARY KEY REFERENCES sessions(id),
+			parent_id     TEXT REFERENCES sessions(id),
+			parent_msg_id INTEGER REFERENCES messages(id)
+		);
 
-func (s *Store) SessionExists(id string) (bool, error) {
-	sess, err := s.r.getSession(id)
+		CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
+	`)
 	if err != nil {
-		return false, err
+		return err
 	}
-	return sess != nil, nil
-}
 
-func (s *Store) GetLastSession(channel, mode string) (string, error) {
-	sessions, err := s.r.findSessions(channel, mode, 1)
-	if err != nil {
-		return "", fmt.Errorf("get last session: %w", err)
-	}
-	if len(sessions) == 0 {
-		return "", nil
-	}
-	return sessions[0].ID, nil
-}
+	s.db.Exec("ALTER TABLE sessions RENAME COLUMN platform TO channel")
+	s.db.Exec("ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'coding'")
 
-func (s *Store) GetSession(id string) (*SessionMeta, error) {
-	sess, err := s.r.getSession(id)
-	if err != nil {
-		return nil, fmt.Errorf("get session: %w", err)
-	}
-	return sess, nil
-}
-
-func (s *Store) ListSessions(channel string) ([]SessionMeta, error) {
-	sessions, err := s.r.findSessions(channel, "", 0)
-	if err != nil {
-		return nil, fmt.Errorf("list sessions: %w", err)
-	}
-	return sessions, nil
-}
-
-func (s *Store) PersistMessage(sessionID string, role string, content string, toolCallsJSON []byte, toolCallID string, toolName string, thinking string, model string, usageJSON []byte) (int64, error) {
-	ts := float64(time.Now().UnixNano()) / 1e9
-	id, err := s.r.insertMessage(sessionID, role, content, toolCallsJSON, toolCallID, toolName, thinking, model, usageJSON, ts)
-	if err != nil {
-		return 0, fmt.Errorf("persist message: %w", err)
-	}
-	if err := s.TouchSession(sessionID); err != nil {
-		logger.L().Error("failed to touch session", "session_id", sessionID, "error", err)
-	}
-	return id, nil
-}
-
-func (s *Store) LoadMessagesForSession(sessionID string) ([]Message, error) {
-	msgs, err := s.r.findMessages(sessionID, 0, []string{"system", "tool_defs", "system_prompt"}, "", 0)
-	if err != nil {
-		return nil, fmt.Errorf("load messages for session: %w", err)
-	}
-	return msgs, nil
-}
-
-func (s *Store) LoadMessagesUpToID(sessionID string, upToMsgID int64) ([]Message, error) {
-	msgs, err := s.r.findMessages(sessionID, upToMsgID, []string{"system", "tool_defs", "system_prompt"}, "", 0)
-	if err != nil {
-		return nil, fmt.Errorf("load messages up to id: %w", err)
-	}
-	return msgs, nil
-}
-
-func (s *Store) GetFirstUserMessage(sessionID string) (string, error) {
-	msgs, err := s.r.findMessages(sessionID, 0, nil, "user", 1)
-	if err != nil {
-		return "", err
-	}
-	if len(msgs) == 0 {
-		return "", nil
-	}
-	return msgs[0].Content, nil
-}
-
-func (s *Store) CreateBranch(sessionID, parentID string, parentMsgID int64) error {
-	if err := s.r.insertBranch(sessionID, parentID, parentMsgID); err != nil {
-		return fmt.Errorf("create branch: %w", err)
-	}
 	return nil
-}
-
-func (s *Store) LoadBranchMeta(sessionID string) (*BranchMeta, error) {
-	b, err := s.r.getBranch(sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("load branch meta: %w", err)
-	}
-	return b, nil
-}
-
-func (s *Store) ListBranches(sessionID string) ([]BranchMeta, error) {
-	branches, err := s.r.findBranches(sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("list branches: %w", err)
-	}
-	return branches, nil
-}
-
-func (s *Store) LoadBranchChain(sessionID string) ([]BranchMeta, error) {
-	chain, err := s.r.findBranchChain(sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("load branch chain: %w", err)
-	}
-	return chain, nil
 }

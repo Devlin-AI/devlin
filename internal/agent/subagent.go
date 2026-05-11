@@ -81,11 +81,11 @@ func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt str
 	}
 	child.emitter = subEmitter
 
-	if _, err := session.PersistMessage(s.store, childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
+	if _, err := 	session.CreateMessage(s.store, childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist subagent tool_defs", "session_id", childID, "error", err)
 	}
 
-	if _, err := session.PersistMessage(s.store, childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
+	if _, err := 	session.CreateMessage(s.store, childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist subagent system_prompt", "session_id", childID, "error", err)
 	}
 
@@ -135,11 +135,11 @@ func (s *Session) SpawnSubagentAsync(ctx context.Context, description, taskPromp
 	}
 	child.emitter = subEmitter
 
-	if _, err := session.PersistMessage(s.store, childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
+	if _, err := 	session.CreateMessage(s.store, childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist subagent tool_defs", "session_id", childID, "error", err)
 	}
 
-	if _, err := session.PersistMessage(s.store, childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
+	if _, err := 	session.CreateMessage(s.store, childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist subagent system_prompt", "session_id", childID, "error", err)
 	}
 

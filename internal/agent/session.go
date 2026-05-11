@@ -81,11 +81,11 @@ func New(provider llm.Provider, db *store.Store, ch string, mode string, model s
 	}
 	s.emitter = s
 
-	if _, err := session.PersistMessage(db, id, "tool_defs", string(message.MarshalToolDefs(buildToolDefs())), nil, "", "", "", "", nil); err != nil {
+	if _, err := session.CreateMessage(db, id, "tool_defs", string(message.MarshalToolDefs(buildToolDefs())), nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist tool_defs", "session_id", id, "error", err)
 	}
 
-	if _, err := session.PersistMessage(db, id, "system_prompt", sysPrompt, nil, "", "", "", "", nil); err != nil {
+	if _, err := session.CreateMessage(db, id, "system_prompt", sysPrompt, nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist system_prompt", "session_id", id, "error", err)
 	}
 
@@ -98,7 +98,7 @@ func Load(provider llm.Provider, db *store.Store, sessionID string, model string
 		return nil, err
 	}
 
-	meta, err := branch.LoadMeta(db, sessionID)
+	meta, err := branch.GetMeta(db, sessionID)
 	if err != nil {
 		return nil, err
 	}

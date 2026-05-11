@@ -174,7 +174,7 @@ func (s *Session) completeToolCall(tc toolCall, output string, disp tool.ToolDis
 	s.historyMu.Lock()
 	s.history = append(s.history, toolMsg)
 	s.historyMu.Unlock()
-	if _, err := session.PersistMessage(
+	if _, err := session.CreateMessage(
 		s.store,
 		s.id,
 		string(message.RoleTool),

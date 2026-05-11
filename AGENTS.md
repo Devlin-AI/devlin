@@ -40,8 +40,10 @@ Two binaries communicating over WebSocket (`/ws`):
 
 - **`cmd/devlin/`** — Bubble Tea TUI. Files: `model.go` (Update loop, rendering), `ws.go` (WebSocket commands/events), `render.go` (message rendering helpers), `styles.go` (style constants).
 - **`cmd/gateway/`** — Chi HTTP server. `conn.go` (WebSocket connection loop, inbound message dispatch), `main.go` (setup, server lifecycle), `ws.go` (WebSocket upgrade).
-- **`internal/session/`** — Session lifecycle + LLM loop. `session.go` (process loop, branching, subagents), `event.go` (Event type alias, SubagentEmitter).
-- **`internal/store/`** — SQLite persistence. `store.go` (all DB types, queries, helpers).
+- **`internal/agent/`** — Session lifecycle + LLM loop. Files: `session.go` (struct, constructors, accessors), `process.go` (LLM loop, retry logic), `tools.go` (tool execution, tool defs), `subagent.go` (SubagentEmitter, spawning), `branch.go` (branch navigation).
+- **`internal/session/`** — Session/message domain wrappers around store. Thin layer that converts `store.Message` → `message.Message`.
+- **`internal/branch/`** — Branch domain wrappers around store. Type alias `BranchMeta = store.BranchMeta`.
+- **`internal/store/`** — SQLite persistence. Domain files: `store.go` (struct, constructor, migration), `model.go` (types), `session.go`, `message.go`, `branch.go`.
 - **`internal/tool/`** — Tool interface + registry. `tool.go` defines `Tool` and `StreamingExecutor` interfaces. Tools self-register via `init()` in their own file.
 - **`internal/llm/`** — LLM provider interface + registry. Same `init()` pattern. Currently only `zai-coding-plan` (OpenAI-compatible SSE at `api.z.ai`).
 - **`internal/channel/`** — Wire types: `InboundMessage`, `OutboundMessage`, `BranchInfo`, `HistoryMessage`, `BranchPoint`. Shared by both binaries.
@@ -58,19 +60,17 @@ Two binaries communicating over WebSocket (`/ws`):
 - **Model naming**: Config `model` field is `provider/model` (e.g. `zai-coding-plan/glm-5.1`). Split on `/` — first part is provider name, second is model name.
 - **Vendor dir**: Exists locally but is gitignored. `go build` works without it via module cache.
 
-### `store.go` grouping
+### Store file layout
 
-Functions in `internal/store/store.go` must follow this order:
+`internal/store/` is organized by domain. Each domain file contains both public and private methods:
 
-1. Types (`Store`, `BranchMeta`, `SessionMeta`)
-2. Constructor / lifecycle (`NewStore`, `Close`)
-3. Migration (`migrate`)
-4. Session CRUD (`CreateSession`, `TouchSession`, `SessionExists`, `GetSession`, `GetLastSession`, `ListSessions`)
-5. Message CRUD (`InsertMessage`, `PersistMessage`)
-6. Message queries (`LoadMessagesForSession`, `LoadMessagesUpToID`, `GetFirstUserMessage`, `LoadFullHistory`)
-7. Branch CRUD (`CreateBranch`, `LoadBranchMeta`, `ListBranches`)
-8. Branch queries (`walkBranchUp`, `LoadBranchChain`, `ComputeDepth`, `GetParentBranch`)
-9. JSON helpers (`MarshalToolCalls`, `MarshalUsage`)
+- **`store.go`** — `Store` struct (`db *sql.DB`), `NewStore`, `Close`, `openDB`, `migrate`
+- **`model.go`** — Types: `BranchMeta`, `SessionMeta`, `Message`
+- **`session.go`** — `CreateSession`, `GetSession`, `GetLastSession`, `ListSessions`, `SessionExists`, `TouchSession`
+- **`message.go`** — `CreateMessage`, `ListMessages`, `ListMessagesUpToID`, `GetFirstUserMessage`
+- **`branch.go`** — `CreateBranch`, `GetBranchMeta`, `ListBranches`, `GetBranchChain`
+
+Naming convention: `Create` for inserts, `Get` for single-record reads, `List` for collection reads, `Touch` for timestamp updates. `CreateMessage` does **not** call `TouchSession` — callers are responsible for calling `session.Touch` after real (user/assistant) message creation.
 
 ## Design Principles
 
@@ -85,6 +85,6 @@ Functions in `internal/store/store.go` must follow this order:
 
 - **`message.ID` is `int64`**, autoincrement starting at 1. Zero means "not set" — always guard with `> 0`.
 - **`ToolCall.ID`** (not `ToolCallID`) is the field name on the struct for correlating tool calls with tool results.
-- **`persistMessage`** silently returns 0 on error. The `done` event fires with `messageID: 0`, TUI guards with `> 0`.
+- **`CreateMessage`** returns 0 on error. The `done` event fires with `messageID: 0`, TUI guards with `> 0`.
 - **`BranchMeta.ParentID`** is the parent *session* ID, not a branch ID.
-- **`LoadBranchChain`** returns `[root, ..., parent, current]` — already reversed from the upward walk.
+- **`GetBranchChain`** returns `[root, ..., parent, current]` — already reversed from the upward walk.

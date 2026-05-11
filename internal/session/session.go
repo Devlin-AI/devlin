@@ -44,14 +44,14 @@ func List(db *store.Store, channel string) ([]SessionMeta, error) {
 	return result, nil
 }
 
-func PersistMessage(db *store.Store, sessionID string, role string, content string, toolCallsJSON []byte, toolCallID string, toolName string, thinking string, model string, usageJSON []byte) (int64, error) {
-	return db.PersistMessage(sessionID, role, content, toolCallsJSON, toolCallID, toolName, thinking, model, usageJSON)
+func CreateMessage(db *store.Store, sessionID string, role string, content string, toolCallsJSON []byte, toolCallID string, toolName string, thinking string, model string, usageJSON []byte) (int64, error) {
+	return db.CreateMessage(sessionID, role, content, toolCallsJSON, toolCallID, toolName, thinking, model, usageJSON)
 }
 
-func LoadMessagesForSession(db *store.Store, sessionID string) ([]message.Message, error) {
-	raw, err := db.LoadMessagesForSession(sessionID)
+func ListMessages(db *store.Store, sessionID string) ([]message.Message, error) {
+	raw, err := db.ListMessages(sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("load messages for session: %w", err)
+		return nil, fmt.Errorf("list messages: %w", err)
 	}
 	result := make([]message.Message, len(raw))
 	for i, m := range raw {
@@ -60,10 +60,10 @@ func LoadMessagesForSession(db *store.Store, sessionID string) ([]message.Messag
 	return result, nil
 }
 
-func LoadMessagesUpToID(db *store.Store, sessionID string, upToMsgID int64) ([]message.Message, error) {
-	raw, err := db.LoadMessagesUpToID(sessionID, upToMsgID)
+func ListMessagesUpToID(db *store.Store, sessionID string, upToMsgID int64) ([]message.Message, error) {
+	raw, err := db.ListMessagesUpToID(sessionID, upToMsgID)
 	if err != nil {
-		return nil, fmt.Errorf("load messages up to id: %w", err)
+		return nil, fmt.Errorf("list messages up to id: %w", err)
 	}
 	result := make([]message.Message, len(raw))
 	for i, m := range raw {
@@ -77,7 +77,7 @@ func GetFirstUserMessage(db *store.Store, sessionID string) (string, error) {
 }
 
 func LoadFullHistory(db *store.Store, sessionID string) ([]message.Message, error) {
-	msgs, err := LoadMessagesForSession(db, sessionID)
+	msgs, err := ListMessages(db, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("load messages for %s: %w", sessionID, err)
 	}
@@ -89,7 +89,7 @@ func LoadFullHistory(db *store.Store, sessionID string) ([]message.Message, erro
 	}
 	for i := len(chain) - 1; i >= 0; i-- {
 		meta := chain[i]
-		parentMsgs, err := LoadMessagesUpToID(db, meta.ParentID, meta.ParentMsgID)
+		parentMsgs, err := ListMessagesUpToID(db, meta.ParentID, meta.ParentMsgID)
 		if err != nil {
 			return nil, fmt.Errorf("load messages up to id for %s: %w", meta.ParentID, err)
 		}

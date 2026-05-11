@@ -10,10 +10,10 @@ func Create(db *store.Store, sessionID, parentID string, parentMsgID int64) erro
 	return db.CreateBranch(sessionID, parentID, parentMsgID)
 }
 
-func LoadMeta(db *store.Store, sessionID string) (*BranchMeta, error) {
-	b, err := db.LoadBranchMeta(sessionID)
+func GetMeta(db *store.Store, sessionID string) (*BranchMeta, error) {
+	b, err := db.GetBranchMeta(sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("load branch meta: %w", err)
+		return nil, fmt.Errorf("get branch meta: %w", err)
 	}
 	if b == nil {
 		return nil, nil
@@ -34,7 +34,7 @@ func ListChildren(db *store.Store, parentID string) ([]BranchMeta, error) {
 }
 
 func LoadChain(db *store.Store, sessionID string) ([]BranchMeta, error) {
-	chain, err := db.LoadBranchChain(sessionID)
+	chain, err := db.GetBranchChain(sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -50,5 +50,5 @@ func ComputeDepth(db *store.Store, sessionID string) (int, error) {
 }
 
 func GetParent(db *store.Store, sessionID string) (*BranchMeta, error) {
-	return db.LoadBranchMeta(sessionID)
+	return db.GetBranchMeta(sessionID)
 }

@@ -42,8 +42,11 @@ func (s *Session) ProcessMessage(content string) {
 		Content:   content,
 		Timestamp: time.Now(),
 	})
-	if _, err := session.PersistMessage(s.store, s.id, string(message.RoleUser), content, nil, "", "", "", "", nil); err != nil {
+	if _, err := session.CreateMessage(s.store, s.id, string(message.RoleUser), content, nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist user message", "session_id", s.id, "error", err)
+	}
+	if err := session.Touch(s.store, s.id); err != nil {
+		logger.L().Error("failed to touch session", "session_id", s.id, "error", err)
 	}
 
 	s.processLoop()
@@ -62,7 +65,7 @@ func (s *Session) processLoop() {
 		newPrompt := prompt.Build(cwd, tool.All())
 		if newPrompt != s.systemPrompt {
 			s.systemPrompt = newPrompt
-			if _, err := session.PersistMessage(s.store, s.id, "system_prompt", newPrompt, nil, "", "", "", "", nil); err != nil {
+			if _, err := session.CreateMessage(s.store, s.id, "system_prompt", newPrompt, nil, "", "", "", "", nil); err != nil {
 				logger.L().Error("failed to persist system_prompt", "session_id", s.id, "error", err)
 			}
 		}
@@ -243,7 +246,7 @@ func (s *Session) processLoop() {
 		}
 
 		s.history = append(s.history, assistantMsg)
-		assistantMsgID, err := session.PersistMessage(
+		assistantMsgID, err := session.CreateMessage(
 			s.store,
 			s.id,
 			string(message.RoleAssistant),
@@ -256,6 +259,9 @@ func (s *Session) processLoop() {
 		)
 		if err != nil {
 			logger.L().Error("failed to persist assistant message", "session_id", s.id, "error", err)
+		}
+		if err := session.Touch(s.store, s.id); err != nil {
+			logger.L().Error("failed to touch session", "session_id", s.id, "error", err)
 		}
 
 		if len(toolCalls) == 0 {

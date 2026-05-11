@@ -27,7 +27,7 @@ func (cs *connState) branchInfos(metas []branch.BranchMeta) []protocol.BranchInf
 }
 
 func (cs *connState) loadSiblingInfo(sessionID string) (*protocol.BranchInfo, []protocol.BranchInfo, int) {
-	currentMeta, err := branch.LoadMeta(cs.store, sessionID)
+	currentMeta, err := branch.GetMeta(cs.store, sessionID)
 	if err != nil {
 		logger.L().Error("load branch meta failed", "session_id", sessionID, "error", err)
 		return nil, nil, 0

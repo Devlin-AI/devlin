@@ -22,7 +22,7 @@ func (s *Session) Branch(msgID int64) (*Session, error) {
 		return nil, err
 	}
 
-	historyCopy, err := session.LoadMessagesUpToID(s.store, s.id, msgID)
+	historyCopy, err := session.ListMessagesUpToID(s.store, s.id, msgID)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func (s *Session) SwitchTo(sessionID string) (*Session, error) {
 		return nil, err
 	}
 
-	meta, err := branch.LoadMeta(s.store, sessionID)
+	meta, err := branch.GetMeta(s.store, sessionID)
 	if err != nil {
 		return nil, err
 	}
