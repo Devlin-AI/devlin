@@ -8,10 +8,9 @@ import (
 )
 
 func (s *Store) CreateMessage(sessionID, role, content string, toolCallsJSON []byte, toolCallID, toolName, thinking, model string, usageJSON []byte) (int64, error) {
-	ts := float64(time.Now().UnixNano()) / 1e9
+	ts := float64(time.Now().Unix())
 	result, err := s.db.Exec(
-		`INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, tool_name, thinking, model, usage, timestamp)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, tool_name, thinking, model, usage, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		sessionID, role, content, toolCallsJSON, toolCallID, toolName, thinking, model, usageJSON, ts,
 	)
 	if err != nil {

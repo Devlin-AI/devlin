@@ -11,7 +11,7 @@ func (s *Store) CreateBranch(sessionID, parentID string, parentMsgID int64) erro
 		"INSERT INTO branches (session_id, parent_id, parent_msg_id) VALUES (?, ?, ?)",
 		sessionID, parentID, parentMsgID,
 	)
-	return err
+	return fmt.Errorf("create branch: %w", err)
 }
 
 func (s *Store) GetBranchMeta(sessionID string) (*BranchMeta, error) {
@@ -67,15 +67,16 @@ func (s *Store) ListBranches(parentID string) ([]BranchMeta, error) {
 }
 
 func (s *Store) GetBranchChain(sessionID string) ([]BranchMeta, error) {
-	rows, err := s.db.Query(`
-		WITH RECURSIVE chain AS (
-			SELECT session_id, parent_id, parent_msg_id FROM branches WHERE session_id = ?
-			UNION ALL
-			SELECT b.session_id, b.parent_id, b.parent_msg_id
-			FROM branches b INNER JOIN chain c ON b.session_id = c.parent_id
-		)
-		SELECT session_id, parent_id, parent_msg_id FROM chain
-	`, sessionID)
+	rows, err := s.db.Query(
+		"WITH RECURSIVE chain AS ("+
+			"SELECT session_id, parent_id, parent_msg_id FROM branches WHERE session_id = ? "+
+			"UNION ALL "+
+			"SELECT b.session_id, b.parent_id, b.parent_msg_id "+
+			"FROM branches b INNER JOIN chain c ON b.session_id = c.parent_id "+
+			") "+
+			"SELECT session_id, parent_id, parent_msg_id FROM chain",
+		sessionID,
+	)
 	if err != nil {
 		return nil, err
 	}

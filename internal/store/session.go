@@ -13,7 +13,7 @@ func (s *Store) CreateSession(id, channel, mode string) error {
 		"INSERT INTO sessions (id, channel, mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
 		id, channel, mode, now.Unix(), now.Unix(),
 	)
-	return err
+	return fmt.Errorf("create session: %w", err)
 }
 
 func (s *Store) GetSession(id string) (*SessionMeta, error) {
@@ -56,7 +56,7 @@ func (s *Store) ListSessions(channel string) ([]SessionMeta, error) {
 func (s *Store) SessionExists(id string) (bool, error) {
 	sess, err := s.GetSession(id)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("session exists: %w", err)
 	}
 	return sess != nil, nil
 }
