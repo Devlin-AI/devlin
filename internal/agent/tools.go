@@ -76,22 +76,6 @@ func buildToolDefsWithTools(tools map[string]tool.Tool) []message.ToolDef {
 	return defs
 }
 
-func buildToolDefs() []message.ToolDef {
-	tools := tool.All()
-	defs := make([]message.ToolDef, 0, len(tools))
-	for _, t := range tools {
-		defs = append(defs, message.ToolDef{
-			Type: "function",
-			Function: message.FunctionDef{
-				Name:        t.Name(),
-				Description: t.Description(),
-				Parameters:  t.Parameters(),
-			},
-		})
-	}
-	return defs
-}
-
 func marshalToolCallDisplay(disp tool.ToolDisplay) []byte {
 	b, err := json.Marshal(disp)
 	if err != nil {

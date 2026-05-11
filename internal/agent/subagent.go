@@ -46,18 +46,59 @@ func (e *SubagentEmitter) SendToolStart(tc toolCall) {
 }
 
 func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt string) (string, error) {
+	child, err := s.createChildSession(ctx, description, taskPrompt)
+	if err != nil {
+		return "", err
+	}
+
+	child.ProcessMessage(taskPrompt)
+
+	for i := len(child.history) - 1; i >= 0; i-- {
+		if child.history[i].Role == message.RoleAssistant {
+			return child.history[i].Content, nil
+		}
+	}
+
+	return "", fmt.Errorf("subagent produced no output")
+}
+
+func (s *Session) SpawnSubagentAsync(ctx context.Context, description, taskPrompt string) (string, error) {
+	child, err := s.createChildSession(ctx, description, taskPrompt)
+	if err != nil {
+		return "", err
+	}
+
+	onComplete := func(ps *process.ProcessSession) {
+		ps.Result = child.getLastAssistantResponse()
+	}
+
+	runFunc := func(ctx context.Context) (string, error) {
+		child.parentCtx = ctx
+		child.ProcessMessage(taskPrompt)
+		return child.getLastAssistantResponse(), nil
+	}
+
+	_, err = process.DefaultRegistry.SpawnAgent(description, taskPrompt, runFunc, process.WithOnComplete(onComplete))
+	if err != nil {
+		return "", err
+	}
+
+	return child.id, nil
+}
+
+func (s *Session) createChildSession(ctx context.Context, description, taskPrompt string) (*Session, error) {
 	if defaultMaxDepth > 0 && s.depth >= defaultMaxDepth {
-		return "", fmt.Errorf("maximum subagent depth (%d) reached", defaultMaxDepth)
+		return nil, fmt.Errorf("maximum subagent depth (%d) reached", defaultMaxDepth)
 	}
 
 	childID := uuid.New().String()
 
 	if err := session.Create(s.store, childID, s.channel, s.mode); err != nil {
-		return "", fmt.Errorf("create subagent session: %w", err)
+		return nil, fmt.Errorf("create subagent session: %w", err)
 	}
 
 	if err := branch.Create(s.store, childID, s.id, 0); err != nil {
-		return "", fmt.Errorf("create subagent branch: %w", err)
+		return nil, fmt.Errorf("create subagent branch: %w", err)
 	}
 
 	subTools := buildSubagentTools(s.depth + 1)
@@ -81,84 +122,15 @@ func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt str
 	}
 	child.emitter = subEmitter
 
-	if _, err := 	session.CreateMessage(s.store, childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
+	if _, err := session.CreateMessage(s.store, childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist subagent tool_defs", "session_id", childID, "error", err)
 	}
 
-	if _, err := 	session.CreateMessage(s.store, childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
+	if _, err := session.CreateMessage(s.store, childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist subagent system_prompt", "session_id", childID, "error", err)
 	}
 
-	child.ProcessMessage(taskPrompt)
-
-	for i := len(child.history) - 1; i >= 0; i-- {
-		if child.history[i].Role == message.RoleAssistant {
-			return child.history[i].Content, nil
-		}
-	}
-
-	return "", fmt.Errorf("subagent produced no output")
-}
-
-func (s *Session) SpawnSubagentAsync(ctx context.Context, description, taskPrompt string) (string, error) {
-	if defaultMaxDepth > 0 && s.depth >= defaultMaxDepth {
-		return "", fmt.Errorf("maximum subagent depth (%d) reached", defaultMaxDepth)
-	}
-
-	childID := uuid.New().String()
-
-	if err := session.Create(s.store, childID, s.channel, s.mode); err != nil {
-		return "", fmt.Errorf("create subagent session: %w", err)
-	}
-
-	if err := branch.Create(s.store, childID, s.id, 0); err != nil {
-		return "", fmt.Errorf("create subagent branch: %w", err)
-	}
-
-	subTools := buildSubagentTools(s.depth + 1)
-	cwd, _ := os.Getwd()
-	subPrompt := prompt.Build(cwd, subTools)
-
-	subEmitter := NewSubagentEmitter(s.onEvent, s.depth+1, description)
-
-	child := &Session{
-		id:           childID,
-		channel:      s.channel,
-		mode:         s.mode,
-		provider:     s.provider,
-		store:        s.store,
-		model:        s.model,
-		systemPrompt: subPrompt,
-		onEvent:      subEmitter.SendEvent,
-		parentID:     s.id,
-		depth:        s.depth + 1,
-	}
-	child.emitter = subEmitter
-
-	if _, err := 	session.CreateMessage(s.store, childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
-		logger.L().Error("failed to persist subagent tool_defs", "session_id", childID, "error", err)
-	}
-
-	if _, err := 	session.CreateMessage(s.store, childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
-		logger.L().Error("failed to persist subagent system_prompt", "session_id", childID, "error", err)
-	}
-
-	onComplete := func(ps *process.ProcessSession) {
-		ps.Result = child.getLastAssistantResponse()
-	}
-
-	runFunc := func(ctx context.Context) (string, error) {
-		child.parentCtx = ctx
-		child.ProcessMessage(taskPrompt)
-		return child.getLastAssistantResponse(), nil
-	}
-
-	_, err := process.DefaultRegistry.SpawnAgent(description, taskPrompt, runFunc, process.WithOnComplete(onComplete))
-	if err != nil {
-		return "", err
-	}
-
-	return childID, nil
+	return child, nil
 }
 
 func (s *Session) getLastAssistantResponse() string {

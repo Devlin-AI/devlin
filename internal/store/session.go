@@ -13,7 +13,10 @@ func (s *Store) CreateSession(id, channel, mode string) error {
 		"INSERT INTO sessions (id, channel, mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
 		id, channel, mode, now.Unix(), now.Unix(),
 	)
-	return fmt.Errorf("create session: %w", err)
+	if err != nil {
+		return fmt.Errorf("create session: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) GetSession(id string) (*SessionMeta, error) {

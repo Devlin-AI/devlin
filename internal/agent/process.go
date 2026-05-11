@@ -58,7 +58,7 @@ func (s *Session) processLoop() {
 		parentCtx = context.Background()
 	}
 	ctx := tool.ContextWithSpawner(parentCtx, s)
-	toolDefs := buildToolDefs()
+	toolDefs := buildToolDefsWithTools(tool.All())
 
 	for {
 		cwd, _ := os.Getwd()
@@ -130,80 +130,80 @@ func (s *Session) processLoop() {
 			var retryNeeded bool
 			var tokensReceived bool
 			for evt := range ch {
-		switch evt.Type {
-			case message.StreamEventToken:
-				assistantText += evt.Token
-				s.emitter.SendEvent(Event{Type: "token", Content: evt.Token})
-				tokensReceived = true
-			case message.StreamEventThinking:
-				thinkingText += evt.Token
-				s.emitter.SendEvent(Event{Type: "thinking", Content: evt.Token})
-				tokensReceived = true
-			case message.StreamEventDone:
-				if evt.Usage != nil {
-					streamUsage = evt.Usage
-				}
-			case message.StreamEventToolStart:
-						if evt.ToolID != "" {
-							if len(toolCalls) > 0 {
-								s.emitter.SendToolStart(toolCalls[len(toolCalls)-1])
-							}
-							toolCalls = append(toolCalls, toolCall{
-								ID:   evt.ToolID,
-								Name: evt.ToolName,
-								Args: evt.Token,
-							})
-						} else if len(toolCalls) > 0 {
-							toolCalls[len(toolCalls)-1].Args += evt.Token
-						}
-					case message.StreamEventError:
-						if ctx.Err() != nil {
-							s.emitter.SendEvent(Event{Type: "cancelled"})
-							s.history = s.history[:len(s.history)-1]
-							s.setCancel(nil)
-							return
-						}
-						if evt.StatusCode == stallStatusCode {
-							if !tokensReceived && stallRetries < maxStallRetries {
-								stallRetries++
-								logger.L().Warn("stream stall, retrying", "attempt", stallRetries, "max", maxStallRetries)
-								s.emitter.SendEvent(Event{Type: "status", Content: fmt.Sprintf("Stream stalled, retrying... attempt %d/%d", stallRetries, maxStallRetries)})
-								select {
-								case <-ctx.Done():
-								case <-time.After(retryBackoff(stallRetries - 1)):
-								}
-								attempt = -1
-								continue attemptLoop
-							}
-							if tokensReceived {
-								logger.L().Warn("stream stall with partial content")
-								assistantText += "\n\n[Warning: Stream stalled — returning partial response]"
-								if len(toolCalls) > 0 {
-									assistantText += fmt.Sprintf(" (%d tool call(s) dropped)", len(toolCalls))
-									toolCalls = nil
-								}
-							} else {
-								logger.L().Error("stream stall retries exhausted", "retries", maxStallRetries)
-								s.emitter.SendEvent(Event{Type: "error", Content: "Stream stalled repeatedly with no response"})
-								s.setCancel(nil)
-								return
-							}
-							break
-						}
-						if evt.StatusCode != 0 && isRetryableStatus(evt.StatusCode) && attempt < maxProviderRetries {
-							logger.L().Warn("retryable provider error", "status", evt.StatusCode, "attempt", attempt+1, "max", maxProviderRetries)
-							retryNeeded = true
-							streamErr = fmt.Errorf("HTTP %d: %s", evt.StatusCode, evt.Error)
-						} else {
-							logger.L().Error("stream event error", "error", evt.Error, "status", evt.StatusCode)
-							s.emitter.SendEvent(Event{Type: "error", Content: evt.Error})
-							s.setCancel(nil)
-							return
-						}
+				switch evt.Type {
+				case message.StreamEventToken:
+					assistantText += evt.Token
+					s.emitter.SendEvent(Event{Type: "token", Content: evt.Token})
+					tokensReceived = true
+				case message.StreamEventThinking:
+					thinkingText += evt.Token
+					s.emitter.SendEvent(Event{Type: "thinking", Content: evt.Token})
+					tokensReceived = true
+				case message.StreamEventDone:
+					if evt.Usage != nil {
+						streamUsage = evt.Usage
 					}
-					if retryNeeded {
+				case message.StreamEventToolStart:
+					if evt.ToolID != "" {
+						if len(toolCalls) > 0 {
+							s.emitter.SendToolStart(toolCalls[len(toolCalls)-1])
+						}
+						toolCalls = append(toolCalls, toolCall{
+							ID:   evt.ToolID,
+							Name: evt.ToolName,
+							Args: evt.Token,
+						})
+					} else if len(toolCalls) > 0 {
+						toolCalls[len(toolCalls)-1].Args += evt.Token
+					}
+				case message.StreamEventError:
+					if ctx.Err() != nil {
+						s.emitter.SendEvent(Event{Type: "cancelled"})
+						s.history = s.history[:len(s.history)-1]
+						s.setCancel(nil)
+						return
+					}
+					if evt.StatusCode == stallStatusCode {
+						if !tokensReceived && stallRetries < maxStallRetries {
+							stallRetries++
+							logger.L().Warn("stream stall, retrying", "attempt", stallRetries, "max", maxStallRetries)
+							s.emitter.SendEvent(Event{Type: "status", Content: fmt.Sprintf("Stream stalled, retrying... attempt %d/%d", stallRetries, maxStallRetries)})
+							select {
+							case <-ctx.Done():
+							case <-time.After(retryBackoff(stallRetries - 1)):
+							}
+							attempt = -1
+							continue attemptLoop
+						}
+						if tokensReceived {
+							logger.L().Warn("stream stall with partial content")
+							assistantText += "\n\n[Warning: Stream stalled — returning partial response]"
+							if len(toolCalls) > 0 {
+								assistantText += fmt.Sprintf(" (%d tool call(s) dropped)", len(toolCalls))
+								toolCalls = nil
+							}
+						} else {
+							logger.L().Error("stream stall retries exhausted", "retries", maxStallRetries)
+							s.emitter.SendEvent(Event{Type: "error", Content: "Stream stalled repeatedly with no response"})
+							s.setCancel(nil)
+							return
+						}
 						break
 					}
+					if evt.StatusCode != 0 && isRetryableStatus(evt.StatusCode) && attempt < maxProviderRetries {
+						logger.L().Warn("retryable provider error", "status", evt.StatusCode, "attempt", attempt+1, "max", maxProviderRetries)
+						retryNeeded = true
+						streamErr = fmt.Errorf("HTTP %d: %s", evt.StatusCode, evt.Error)
+					} else {
+						logger.L().Error("stream event error", "error", evt.Error, "status", evt.StatusCode)
+						s.emitter.SendEvent(Event{Type: "error", Content: evt.Error})
+						s.setCancel(nil)
+						return
+					}
+				}
+				if retryNeeded {
+					break
+				}
 			}
 
 			if !retryNeeded {

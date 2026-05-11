@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/devlin-ai/devlin/internal/branch"
 	"github.com/devlin-ai/devlin/internal/llm"
@@ -39,6 +38,10 @@ func SetDefaultMaxDepth(d int) {
 }
 
 type Session struct {
+	mu        sync.Mutex
+	cancelMu  sync.Mutex
+	historyMu sync.Mutex
+
 	id           string
 	channel      string
 	mode         string
@@ -47,9 +50,6 @@ type Session struct {
 	model        string
 	history      []message.Message
 	systemPrompt string
-	mu           sync.Mutex
-	cancelMu     sync.Mutex
-	historyMu    sync.Mutex
 	onEvent      func(Event)
 	cancel       context.CancelFunc
 	parentID     string
@@ -81,7 +81,7 @@ func New(provider llm.Provider, db *store.Store, ch string, mode string, model s
 	}
 	s.emitter = s
 
-	if _, err := session.CreateMessage(db, id, "tool_defs", string(message.MarshalToolDefs(buildToolDefs())), nil, "", "", "", "", nil); err != nil {
+	if _, err := session.CreateMessage(db, id, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(tool.All()))), nil, "", "", "", "", nil); err != nil {
 		logger.L().Error("failed to persist tool_defs", "session_id", id, "error", err)
 	}
 
@@ -162,10 +162,6 @@ func (s *Session) SetOnEvent(fn func(Event)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onEvent = fn
-}
-
-func (s *Session) IsExpired(timeout time.Duration) bool {
-	return false
 }
 
 func (s *Session) Cancel() {
