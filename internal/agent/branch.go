@@ -9,8 +9,8 @@ import (
 )
 
 func (s *Session) Branch(msgID int64) (*Session, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
 
 	branchID := uuid.New().String()
 
@@ -45,8 +45,8 @@ func (s *Session) Branch(msgID int64) (*Session, error) {
 }
 
 func (s *Session) SwitchTo(sessionID string) (*Session, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
 
 	exists, err := session.Exists(s.store, sessionID)
 	if err != nil {

@@ -53,13 +53,11 @@ func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt str
 
 	child.ProcessMessage(taskPrompt)
 
-	for i := len(child.history) - 1; i >= 0; i-- {
-		if child.history[i].Role == message.RoleAssistant {
-			return child.history[i].Content, nil
-		}
+	lastResponse := child.getLastAssistantResponse()
+	if lastResponse == "" {
+		return "", fmt.Errorf("subagent produced no output")
 	}
-
-	return "", fmt.Errorf("subagent produced no output")
+	return lastResponse, nil
 }
 
 func (s *Session) SpawnSubagentAsync(ctx context.Context, description, taskPrompt string) (string, error) {

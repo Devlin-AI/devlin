@@ -34,8 +34,8 @@ func retryBackoff(attempt int) time.Duration {
 }
 
 func (s *Session) ProcessMessage(content string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
 
 	s.history = append(s.history, message.Message{
 		Role:      message.RoleUser,

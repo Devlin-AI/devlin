@@ -38,7 +38,7 @@ func SetDefaultMaxDepth(d int) {
 }
 
 type Session struct {
-	mu        sync.Mutex
+	sessionMu sync.Mutex
 	cancelMu  sync.Mutex
 	historyMu sync.Mutex
 
@@ -159,8 +159,8 @@ func (s *Session) Mode() string {
 }
 
 func (s *Session) SetOnEvent(fn func(Event)) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
 	s.onEvent = fn
 }
 
