@@ -108,6 +108,11 @@ func main() {
 			provider: provider,
 			model:    modelName,
 		}
+		defer func() {
+			if cs.sess != nil {
+				cs.sess.Cancel()
+			}
+		}()
 
 		cs.handleConnection()
 	})
