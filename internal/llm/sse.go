@@ -42,25 +42,33 @@ func streamOpenAISSE(ctx context.Context, req *http.Request, stallTimeout time.D
 			return
 		}
 
-		go func() {
-			<-ctx.Done()
-			resp.Body.Close()
-		}()
+	go func() {
+		<-ctx.Done()
+		resp.Body.Close()
+	}()
 
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			log.Error("unexpected status code", "status", resp.StatusCode, "body", string(body))
-			ch <- message.StreamEvent{
-				Type:       message.StreamEventError,
-				Error:      fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body)),
-				StatusCode: resp.StatusCode,
-			}
-			return
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		log.Error("unexpected status code", "status", resp.StatusCode, "body", string(body))
+		ch <- message.StreamEvent{
+			Type:       message.StreamEventError,
+			Error:      fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body)),
+			StatusCode: resp.StatusCode,
 		}
+		return
+	}
 
-		done := make(chan struct{})
-		defer close(done)
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			resp.Body.Close()
+		case <-done:
+		}
+	}()
 
 		var lastEventMs atomic.Int64
 		lastEventMs.Store(time.Now().UnixMilli())

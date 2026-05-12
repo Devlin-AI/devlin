@@ -191,6 +191,9 @@ func (s *Session) Cancel() {
 func (s *Session) setCancel(fn context.CancelFunc) {
 	s.cancelMu.Lock()
 	defer s.cancelMu.Unlock()
+	if s.cancel != nil {
+		s.cancel()
+	}
 	s.cancel = fn
 }
 
