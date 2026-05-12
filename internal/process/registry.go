@@ -286,11 +286,12 @@ func (r *Registry) finalize(ps *ProcessSession) {
 		ps.bgTimer.Stop()
 	}
 
-	ps.closeOnce.Do(func() { close(ps.done) })
-
-	if ps.OnComplete != nil {
-		go ps.OnComplete(ps)
-	}
+	ps.closeOnce.Do(func() {
+		close(ps.done)
+		if ps.OnComplete != nil {
+			go ps.OnComplete(ps)
+		}
+	})
 }
 
 func (r *Registry) Write(id, data string) error {
