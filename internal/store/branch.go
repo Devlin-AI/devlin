@@ -11,7 +11,10 @@ func (s *Store) CreateBranch(sessionID, parentID string, parentMsgID int64) erro
 		"INSERT INTO branches (session_id, parent_id, parent_msg_id) VALUES (?, ?, ?)",
 		sessionID, parentID, parentMsgID,
 	)
-	return fmt.Errorf("create branch: %w", err)
+	if err != nil {
+		return fmt.Errorf("create branch: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) GetBranchMeta(sessionID string) (*BranchMeta, error) {
