@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/devlin-ai/devlin/internal/agent"
@@ -31,10 +30,7 @@ func setupGateway() (llm.Provider, *store.Store, string, int, error) {
 		return nil, nil, "", 0, err
 	}
 
-	modelParts := strings.SplitN(cfg.LLM.Model, "/", 2)
-	providerName := modelParts[0]
-	modelName := modelParts[1]
-
+	providerName, modelName := cfg.LLM.ModelParts()
 	providerCfg := cfg.LLM.Providers[providerName]
 
 	provider, err := llm.NewProvider(providerName, providerCfg.APIKey, modelName, providerCfg.BaseURL)

@@ -115,12 +115,12 @@ func (c *llmConfig) validate() error {
 	if len(c.Providers) == 0 {
 		return fmt.Errorf("at least one provider is required")
 	}
-	parts := splitModel(c.Model)
-	if len(parts) != 2 {
+	provider, model := c.ModelParts()
+	if model == "" {
 		return fmt.Errorf("model must be in provider/model format, got %q", c.Model)
 	}
-	if _, ok := c.Providers[parts[0]]; !ok {
-		return fmt.Errorf("provider %q not found (model %q)", parts[0], c.Model)
+	if _, ok := c.Providers[provider]; !ok {
+		return fmt.Errorf("provider %q not found (model %q)", provider, c.Model)
 	}
 	return nil
 }
@@ -130,6 +130,15 @@ func (c *sessionConfig) validate() error {
 		return fmt.Errorf("max_depth must be positive, got %d", c.MaxDepth)
 	}
 	return nil
+}
+
+func (c *llmConfig) ModelParts() (string, string) {
+	for i, ch := range c.Model {
+		if ch == '/' {
+			return c.Model[:i], c.Model[i+1:]
+		}
+	}
+	return c.Model, ""
 }
 
 func (c *Config) Validate() error {
@@ -143,15 +152,6 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("session: %w", err)
 	}
 	return nil
-}
-
-func splitModel(model string) []string {
-	for i, ch := range model {
-		if ch == '/' {
-			return []string{model[:i], model[i+1:]}
-		}
-	}
-	return []string{model}
 }
 
 func Load() (*Config, error) {
