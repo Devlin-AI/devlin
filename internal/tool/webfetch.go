@@ -341,13 +341,13 @@ func htmlToMarkdown(htmlContent string) string {
 		if err == nil {
 			return markdown
 		}
-		logger.L().Warn("readability markdown conversion failed, falling back to full page", "error", err)
+		logger.Default().Warn("readability markdown conversion failed, falling back to full page", "error", err)
 	}
 
 	converter := md.NewConverter("", true, nil)
 	markdown, err := converter.ConvertString(htmlContent)
 	if err != nil {
-		logger.L().Warn("full page markdown conversion failed, returning raw HTML", "error", err)
+		logger.Default().Warn("full page markdown conversion failed, returning raw HTML", "error", err)
 		return htmlContent
 	}
 	return markdown

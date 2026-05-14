@@ -20,7 +20,7 @@ func main() {
 	}
 	defer logFile.Close()
 
-	logger.Init(logger.WithOutput(logFile))
+	logger.Init(logger.WithWriter(logFile))
 
 	p := tea.NewProgram(initialModel(), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {

@@ -32,7 +32,7 @@ func (cs *connState) send(msg protocol.OutboundMessage) {
 func (cs *connState) handleNew(msg protocol.InboundMessage) {
 	sess, err := agent.New(cs.provider, cs.store, msg.Channel, msg.Mode, cs.model, cs.send)
 	if err != nil {
-		logger.L().Error("failed to create session", "error", err)
+		logger.Default().Error("failed to create session", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
 		return
 	}
@@ -48,7 +48,7 @@ func (cs *connState) handleNew(msg protocol.InboundMessage) {
 func (cs *connState) handleContinue(msg protocol.InboundMessage) {
 	lastID, err := session.GetLast(cs.store, msg.Channel, msg.Mode)
 	if err != nil {
-		logger.L().Error("failed to get last session", "error", err)
+		logger.Default().Error("failed to get last session", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
 		return
 	}
@@ -60,7 +60,7 @@ func (cs *connState) handleContinue(msg protocol.InboundMessage) {
 
 	sess, err := agent.Load(cs.provider, cs.store, lastID, cs.model, cs.send)
 	if err != nil {
-		logger.L().Error("failed to load session", "error", err)
+		logger.Default().Error("failed to load session", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
 		return
 	}
@@ -77,7 +77,7 @@ func (cs *connState) handleCancel(msg protocol.InboundMessage) {
 	if !cs.requireSession() {
 		return
 	}
-	logger.L().Info("cancel requested")
+	logger.Default().Info("cancel requested")
 	cs.sess.Cancel()
 }
 
@@ -87,7 +87,7 @@ func (cs *connState) handleBranch(msg protocol.InboundMessage) {
 	}
 	branch, err := cs.sess.Branch(msg.MessageID)
 	if err != nil {
-		logger.L().Error("branch failed", "error", err)
+		logger.Default().Error("branch failed", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
 		return
 	}
@@ -106,7 +106,7 @@ func (cs *connState) handleSwitchSession(msg protocol.InboundMessage) {
 	}
 	switched, err := cs.sess.SwitchTo(msg.SessionID)
 	if err != nil {
-		logger.L().Error("switch session failed", "error", err)
+		logger.Default().Error("switch session failed", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
 		return
 	}
@@ -129,7 +129,7 @@ func (cs *connState) handleListSessions(msg protocol.InboundMessage) {
 	}
 	sessionMetas, err := session.List(cs.store, ch)
 	if err != nil {
-		logger.L().Error("list sessions failed", "error", err)
+		logger.Default().Error("list sessions failed", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
 		return
 	}

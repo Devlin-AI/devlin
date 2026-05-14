@@ -42,10 +42,10 @@ func (s *Session) ProcessMessage(content string) {
 		Timestamp: time.Now(),
 	})
 	if _, err := session.CreateMessage(s.store, s.id, string(message.RoleUser), content, nil, "", "", "", "", nil); err != nil {
-		logger.L().Error("failed to persist user message", "session_id", s.id, "error", err)
+		logger.Default().Error("failed to persist user message", "session_id", s.id, "error", err)
 	}
 	if err := session.Touch(s.store, s.id); err != nil {
-		logger.L().Error("failed to touch session", "session_id", s.id, "error", err)
+		logger.Default().Error("failed to touch session", "session_id", s.id, "error", err)
 	}
 
 	s.processLoop()
@@ -94,7 +94,7 @@ func (s *Session) processLoop() {
 					s.emitter.SendEvent(Event{Type: "cancelled"})
 					s.history = s.history[:len(s.history)-1]
 				} else {
-					logger.L().Error("stream failed", "error", err)
+					logger.Default().Error("stream failed", "error", err)
 					s.emitter.SendEvent(Event{Type: "error", Content: err.Error()})
 				}
 				s.setCancel(nil)
@@ -104,7 +104,7 @@ func (s *Session) processLoop() {
 			if result.isStall {
 				if stallRetries < maxStallRetries {
 					stallRetries++
-					logger.L().Warn("stream stall, retrying", "attempt", stallRetries, "max", maxStallRetries)
+					logger.Default().Warn("stream stall, retrying", "attempt", stallRetries, "max", maxStallRetries)
 					s.emitter.SendEvent(Event{Type: "status", Content: fmt.Sprintf("Stream stalled, retrying... attempt %d/%d", stallRetries, maxStallRetries)})
 					select {
 					case <-ctx.Done():
@@ -114,14 +114,14 @@ func (s *Session) processLoop() {
 					continue
 				}
 				if result.hasPartial {
-					logger.L().Warn("stream stall with partial content")
+					logger.Default().Warn("stream stall with partial content")
 					result.assistantText += "\n\n[Warning: Stream stalled — returning partial response]"
 					if len(result.toolCalls) > 0 {
 						result.assistantText += fmt.Sprintf(" (%d tool call(s) dropped)", len(result.toolCalls))
 						result.toolCalls = nil
 					}
 				} else {
-					logger.L().Error("stream stall retries exhausted", "retries", maxStallRetries)
+					logger.Default().Error("stream stall retries exhausted", "retries", maxStallRetries)
 					s.emitter.SendEvent(Event{Type: "error", Content: "Stream stalled repeatedly with no response"})
 					s.setCancel(nil)
 					return
@@ -134,7 +134,7 @@ func (s *Session) processLoop() {
 			}
 
 			if result.errorStr != "" {
-				logger.L().Error("stream event error", "error", result.errorStr, "status", result.statusCode)
+				logger.Default().Error("stream event error", "error", result.errorStr, "status", result.statusCode)
 				s.emitter.SendEvent(Event{Type: "error", Content: result.errorStr})
 				s.setCancel(nil)
 				return
@@ -144,7 +144,7 @@ func (s *Session) processLoop() {
 		}
 
 		if streamErr != nil {
-			logger.L().Error("provider retries exhausted", "error", streamErr, "retries", maxProviderRetries)
+			logger.Default().Error("provider retries exhausted", "error", streamErr, "retries", maxProviderRetries)
 			s.emitter.SendEvent(Event{Type: "error", Content: fmt.Sprintf("Failed after %d retries: %s", maxProviderRetries, streamErr.Error())})
 			s.setCancel(nil)
 			return
@@ -192,7 +192,7 @@ func (s *Session) refreshSystemPrompt() {
 	if newPrompt != s.systemPrompt {
 		s.systemPrompt = newPrompt
 		if _, err := session.CreateMessage(s.store, s.id, "system_prompt", newPrompt, nil, "", "", "", "", nil); err != nil {
-			logger.L().Error("failed to persist system_prompt", "session_id", s.id, "error", err)
+			logger.Default().Error("failed to persist system_prompt", "session_id", s.id, "error", err)
 		}
 	}
 }
@@ -301,10 +301,10 @@ func (s *Session) persistAssistantMessage(assistantText, thinkingText string, to
 		message.MarshalUsage(usage),
 	)
 	if err != nil {
-		logger.L().Error("failed to persist assistant message", "session_id", s.id, "error", err)
+		logger.Default().Error("failed to persist assistant message", "session_id", s.id, "error", err)
 	}
 	if err := session.Touch(s.store, s.id); err != nil {
-		logger.L().Error("failed to touch session", "session_id", s.id, "error", err)
+		logger.Default().Error("failed to touch session", "session_id", s.id, "error", err)
 	}
 	return assistantMsgID
 }

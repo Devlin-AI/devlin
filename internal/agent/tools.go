@@ -79,7 +79,7 @@ func buildToolDefsWithTools(tools map[string]tool.Tool) []message.ToolDef {
 func marshalToolCallDisplay(disp tool.ToolDisplay) []byte {
 	b, err := json.Marshal(disp)
 	if err != nil {
-		logger.L().Error("failed to marshal tool display", "error", err)
+		logger.Default().Error("failed to marshal tool display", "error", err)
 		return []byte("{}")
 	}
 	return b
@@ -168,6 +168,6 @@ func (s *Session) completeToolCall(tc toolCall, output string, disp tool.ToolDis
 		tc.Name,
 		"", "", nil,
 	); err != nil {
-		logger.L().Error("failed to persist tool message", "session_id", s.id, "tool", tc.Name, "error", err)
+		logger.Default().Error("failed to persist tool message", "session_id", s.id, "tool", tc.Name, "error", err)
 	}
 }

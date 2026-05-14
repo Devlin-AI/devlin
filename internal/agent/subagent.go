@@ -121,11 +121,11 @@ func (s *Session) createChildSession(ctx context.Context, description, taskPromp
 	child.emitter = subEmitter
 
 	if _, err := session.CreateMessage(s.store, childID, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(subTools))), nil, "", "", "", "", nil); err != nil {
-		logger.L().Error("failed to persist subagent tool_defs", "session_id", childID, "error", err)
+		logger.Default().Error("failed to persist subagent tool_defs", "session_id", childID, "error", err)
 	}
 
 	if _, err := session.CreateMessage(s.store, childID, "system_prompt", subPrompt, nil, "", "", "", "", nil); err != nil {
-		logger.L().Error("failed to persist subagent system_prompt", "session_id", childID, "error", err)
+		logger.Default().Error("failed to persist subagent system_prompt", "session_id", childID, "error", err)
 	}
 
 	return child, nil

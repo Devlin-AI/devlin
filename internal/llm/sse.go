@@ -30,7 +30,7 @@ func streamOpenAISSE(ctx context.Context, req *http.Request, stallTimeout time.D
 
 	go func() {
 		defer close(ch)
-		log := logger.L()
+		log := logger.Default()
 
 		resp, err := httpClient.Do(req)
 		if err != nil {

@@ -97,11 +97,11 @@ func New(provider llm.Provider, db *store.Store, ch string, mode string, model s
 	s.emitter = s
 
 	if _, err := session.CreateMessage(db, id, "tool_defs", string(message.MarshalToolDefs(buildToolDefsWithTools(tool.All()))), nil, "", "", "", "", nil); err != nil {
-		logger.L().Error("failed to persist tool_defs", "session_id", id, "error", err)
+		logger.Default().Error("failed to persist tool_defs", "session_id", id, "error", err)
 	}
 
 	if _, err := session.CreateMessage(db, id, "system_prompt", sysPrompt, nil, "", "", "", "", nil); err != nil {
-		logger.L().Error("failed to persist system_prompt", "session_id", id, "error", err)
+		logger.Default().Error("failed to persist system_prompt", "session_id", id, "error", err)
 	}
 
 	return s, nil
@@ -127,7 +127,7 @@ func Load(provider llm.Provider, db *store.Store, sessionID string, model string
 
 	depth, err := branch.ComputeDepth(db, sessionID)
 	if err != nil {
-		logger.L().Warn("failed to compute depth", "session_id", sessionID, "error", err)
+		logger.Default().Warn("failed to compute depth", "session_id", sessionID, "error", err)
 		depth = 0
 	}
 

@@ -23,7 +23,7 @@ import (
 
 func setupGateway() (llm.Provider, *store.Store, string, int, error) {
 	logger.Init()
-	log := logger.L()
+	log := logger.Default()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -71,14 +71,14 @@ func runServer(r *chi.Mux, port int) {
 
 	go func() {
 		<-sigCh
-		logger.L().Info("shutting down gateway")
+		logger.Default().Info("shutting down gateway")
 		process.KillAll()
 		srv.Close()
 	}()
 
-	logger.L().Info("gateway starting", "addr", addr)
+	logger.Default().Info("gateway starting", "addr", addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		logger.L().Error("server exited", "error", err)
+		logger.Default().Error("server exited", "error", err)
 		os.Exit(1)
 	}
 }
@@ -97,7 +97,7 @@ func main() {
 	r.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			logger.L().Error("websocket upgrade failed", "error", err)
+			logger.Default().Error("websocket upgrade failed", "error", err)
 			return
 		}
 		defer conn.Close()

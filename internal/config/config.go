@@ -107,7 +107,7 @@ func (c *SessionConfig) BackgroundTimeoutDuration() time.Duration {
 }
 
 func Load() (*Config, error) {
-	log := logger.L()
+	log := logger.Default()
 
 	home, _ := os.UserHomeDir()
 	path := filepath.Join(home, ".devlin", "config.json")

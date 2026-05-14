@@ -8,28 +8,28 @@ import (
 
 var defaultLogger *slog.Logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 
-type Config struct {
+type config struct {
 	Level  slog.Level
 	Writer io.Writer
 	Format string
 }
 
-type Option func(*Config)
+type option func(*config)
 
-func WithLevel(level slog.Level) Option {
-	return func(c *Config) { c.Level = level }
+func WithLevel(level slog.Level) option {
+	return func(c *config) { c.Level = level }
 }
 
-func WithOutput(w io.Writer) Option {
-	return func(c *Config) { c.Writer = w }
+func WithWriter(w io.Writer) option {
+	return func(c *config) { c.Writer = w }
 }
 
-func WithFormat(format string) Option {
-	return func(c *Config) { c.Format = format }
+func WithFormat(format string) option {
+	return func(c *config) { c.Format = format }
 }
 
-func Init(opts ...Option) {
-	cfg := Config{
+func Init(opts ...option) {
+	cfg := config{
 		Level:  slog.LevelInfo,
 		Writer: os.Stdout,
 		Format: "text",
@@ -48,6 +48,6 @@ func Init(opts ...Option) {
 	}
 }
 
-func L() *slog.Logger {
+func Default() *slog.Logger {
 	return defaultLogger
 }

@@ -277,7 +277,7 @@ func scanFile(path string, offset, limit int) (*fileResult, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		logger.L().Error("read file scanner error", "error", err)
+		logger.Default().Error("read file scanner error", "error", err)
 	}
 
 	return &fileResult{
