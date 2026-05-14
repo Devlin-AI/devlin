@@ -2,11 +2,10 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/devlin-ai/devlin/internal/logger"
 )
 
 func stripComments(data []byte) []byte {
@@ -49,85 +48,131 @@ func stripComments(data []byte) []byte {
 	return out
 }
 
-type TUIConfig struct {
+type tuiConfig struct {
 	UnlimitedTools []string `json:"unlimited_tools,omitempty"`
 }
 
-type Config struct {
-	Gateway GatewayConfig `json:"gateway"`
-	LLM     LLMConfig     `json:"llm"`
-	Session SessionConfig `json:"session"`
-	TUI     TUIConfig     `json:"tui"`
+type sessionConfig struct {
+	IdleTimeout       int `json:"idle_timeout,omitempty"`
+	MaxDepth          int `json:"max_depth"`
+	BackgroundTimeout int `json:"background_timeout,omitempty"`
 }
 
-type SessionConfig struct {
-	IdleTimeout       string `json:"idle_timeout"`
-	MaxDepth          int    `json:"max_depth"`
-	BackgroundTimeout int    `json:"background_timeout,omitempty"`
-}
-
-type GatewayConfig struct {
+type gatewayConfig struct {
 	Port int `json:"port"`
 }
 
-type LLMConfig struct {
-	Providers    map[string]LLMProviderConfig `json:"providers"`
-	Model        string                       `json:"model"`
-	StallTimeout int                          `json:"stall_timeout,omitempty"`
-}
-
-type LLMProviderConfig struct {
+type llmProviderConfig struct {
 	APIKey  string `json:"api_key"`
 	BaseURL string `json:"base_url,omitempty"`
 }
 
-func (c *LLMConfig) StallTimeoutDuration() time.Duration {
+type llmConfig struct {
+	Providers    map[string]llmProviderConfig `json:"providers"`
+	Model        string                       `json:"model"`
+	StallTimeout int                          `json:"stall_timeout,omitempty"`
+}
+
+type Config struct {
+	Gateway gatewayConfig `json:"gateway"`
+	LLM     llmConfig     `json:"llm"`
+	Session sessionConfig `json:"session"`
+	TUI     tuiConfig     `json:"tui"`
+}
+
+func (c *llmConfig) StallTimeoutDuration() time.Duration {
 	if c.StallTimeout <= 0 {
 		return 60 * time.Second
 	}
 	return time.Duration(c.StallTimeout) * time.Second
 }
 
-func (c *SessionConfig) IdleTimeoutDuration() time.Duration {
-	if c.IdleTimeout == "" {
+func (c *sessionConfig) IdleTimeoutDuration() time.Duration {
+	if c.IdleTimeout <= 0 {
 		return 30 * time.Minute
 	}
-	d, err := time.ParseDuration(c.IdleTimeout)
-	if err != nil {
-		return 30 * time.Minute
-	}
-	return d
+	return time.Duration(c.IdleTimeout) * time.Second
 }
 
-func (c *SessionConfig) BackgroundTimeoutDuration() time.Duration {
+func (c *sessionConfig) BackgroundTimeoutDuration() time.Duration {
 	if c.BackgroundTimeout <= 0 {
 		return 120 * time.Second
 	}
 	return time.Duration(c.BackgroundTimeout) * time.Second
 }
 
-func Load() (*Config, error) {
-	log := logger.Default()
+func (c *gatewayConfig) validate() error {
+	if c.Port <= 0 {
+		return fmt.Errorf("port must be positive, got %d", c.Port)
+	}
+	return nil
+}
 
+func (c *llmConfig) validate() error {
+	if c.Model == "" {
+		return fmt.Errorf("model is required")
+	}
+	if len(c.Providers) == 0 {
+		return fmt.Errorf("at least one provider is required")
+	}
+	parts := splitModel(c.Model)
+	if len(parts) != 2 {
+		return fmt.Errorf("model must be in provider/model format, got %q", c.Model)
+	}
+	if _, ok := c.Providers[parts[0]]; !ok {
+		return fmt.Errorf("provider %q not found (model %q)", parts[0], c.Model)
+	}
+	return nil
+}
+
+func (c *sessionConfig) validate() error {
+	if c.MaxDepth <= 0 {
+		return fmt.Errorf("max_depth must be positive, got %d", c.MaxDepth)
+	}
+	return nil
+}
+
+func (c *Config) Validate() error {
+	if err := c.Gateway.validate(); err != nil {
+		return fmt.Errorf("gateway: %w", err)
+	}
+	if err := c.LLM.validate(); err != nil {
+		return fmt.Errorf("llm: %w", err)
+	}
+	if err := c.Session.validate(); err != nil {
+		return fmt.Errorf("session: %w", err)
+	}
+	return nil
+}
+
+func splitModel(model string) []string {
+	for i, ch := range model {
+		if ch == '/' {
+			return []string{model[:i], model[i+1:]}
+		}
+	}
+	return []string{model}
+}
+
+func Load() (*Config, error) {
 	home, _ := os.UserHomeDir()
 	path := filepath.Join(home, ".devlin", "config.json")
 
-	log.Info("loading config", "path", path)
-
 	data, err := os.ReadFile(path)
 	if err != nil {
-		log.Error("failed to read config file", "path", path, "error", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to read config %s: %w", path, err)
 	}
 
 	data = stripComments(data)
 
 	var config Config
 	if err := json.Unmarshal(data, &config); err != nil {
-		log.Error("failed to parse config", "error", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	log.Info("config loaded", "model", config.LLM.Model, "gateway_port", config.Gateway.Port)
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
 	return &config, nil
 }
