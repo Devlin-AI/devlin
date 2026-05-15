@@ -53,7 +53,6 @@ type tuiConfig struct {
 }
 
 type sessionConfig struct {
-	IdleTimeout       int `json:"idle_timeout,omitempty"`
 	MaxDepth          int `json:"max_depth"`
 	BackgroundTimeout int `json:"background_timeout,omitempty"`
 }
@@ -85,13 +84,6 @@ func (c *llmConfig) StallTimeoutDuration() time.Duration {
 		return 60 * time.Second
 	}
 	return time.Duration(c.StallTimeout) * time.Second
-}
-
-func (c *sessionConfig) IdleTimeoutDuration() time.Duration {
-	if c.IdleTimeout <= 0 {
-		return 30 * time.Minute
-	}
-	return time.Duration(c.IdleTimeout) * time.Second
 }
 
 func (c *sessionConfig) BackgroundTimeoutDuration() time.Duration {
