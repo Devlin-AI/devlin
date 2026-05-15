@@ -48,6 +48,10 @@ func stripComments(data []byte) []byte {
 	return out
 }
 
+type databaseConfig struct {
+	Path string `json:"path,omitempty"`
+}
+
 type tuiConfig struct {
 	UnlimitedTools []string `json:"unlimited_tools,omitempty"`
 }
@@ -73,10 +77,19 @@ type llmConfig struct {
 }
 
 type Config struct {
-	Gateway gatewayConfig `json:"gateway"`
-	LLM     llmConfig     `json:"llm"`
-	Session sessionConfig `json:"session"`
-	TUI     tuiConfig     `json:"tui"`
+	Gateway  gatewayConfig  `json:"gateway"`
+	LLM      llmConfig      `json:"llm"`
+	Session  sessionConfig  `json:"session"`
+	Database databaseConfig `json:"database"`
+	TUI      tuiConfig     `json:"tui"`
+}
+
+func (c *databaseConfig) ResolvePath() string {
+	if c.Path != "" {
+		return c.Path
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".devlin", "devlin.db")
 }
 
 func (c *llmConfig) StallTimeoutDuration() time.Duration {

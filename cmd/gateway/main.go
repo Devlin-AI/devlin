@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/devlin-ai/devlin/internal/agent"
@@ -39,9 +38,7 @@ func setupGateway() (llm.Provider, *store.Store, string, int, error) {
 		return nil, nil, "", 0, err
 	}
 
-	home, _ := os.UserHomeDir()
-	dbPath := filepath.Join(home, ".devlin", "devlin.db")
-	store, err := store.NewStore(dbPath)
+	store, err := store.NewStore(cfg.Database.ResolvePath())
 	if err != nil {
 		log.Error("failed to open store", "error", err)
 		return nil, nil, "", 0, err
