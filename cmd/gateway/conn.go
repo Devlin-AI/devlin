@@ -6,21 +6,15 @@ import (
 
 	"github.com/devlin-ai/devlin/internal/agent"
 	"github.com/devlin-ai/devlin/internal/protocol"
-	"github.com/devlin-ai/devlin/internal/llm"
 	"github.com/devlin-ai/devlin/internal/logger"
 	"github.com/devlin-ai/devlin/internal/session"
-	"github.com/devlin-ai/devlin/internal/store"
 	"github.com/gorilla/websocket"
 )
 
 type connState struct {
-	conn     *websocket.Conn
-	writeMu  sync.Mutex
-	sess     *agent.Session
-	store    *store.Store
-	provider llm.Provider
-	model    string
-	channel  string
+	conn    *websocket.Conn
+	writeMu sync.Mutex
+	gw      *gateway
 }
 
 func (cs *connState) send(msg protocol.OutboundMessage) {
@@ -30,14 +24,13 @@ func (cs *connState) send(msg protocol.OutboundMessage) {
 }
 
 func (cs *connState) handleNew(msg protocol.InboundMessage) {
-	sess, err := agent.New(cs.provider, cs.store, msg.Channel, msg.Mode, cs.model, cs.send)
+	sess, err := agent.New(cs.gw.provider, cs.gw.store, msg.Channel, msg.Mode, cs.gw.model)
 	if err != nil {
 		logger.Default().Error("failed to create session", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
 		return
 	}
-	cs.sess = sess
-	cs.channel = msg.Channel
+	cs.gw.sessions.Store(sess.ID(), sess)
 	cs.send(protocol.OutboundMessage{
 		Type:      "session_created",
 		SessionID: sess.ID(),
@@ -46,7 +39,7 @@ func (cs *connState) handleNew(msg protocol.InboundMessage) {
 }
 
 func (cs *connState) handleContinue(msg protocol.InboundMessage) {
-	lastID, err := session.GetLast(cs.store, msg.Channel, msg.Mode)
+	lastID, err := session.GetLast(cs.gw.store, msg.Channel, msg.Mode)
 	if err != nil {
 		logger.Default().Error("failed to get last session", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
@@ -58,14 +51,12 @@ func (cs *connState) handleContinue(msg protocol.InboundMessage) {
 		return
 	}
 
-	sess, err := agent.Load(cs.provider, cs.store, lastID, cs.model, cs.send)
+	sess, err := cs.gw.resolve(lastID)
 	if err != nil {
 		logger.Default().Error("failed to load session", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
 		return
 	}
-	cs.sess = sess
-	cs.channel = msg.Channel
 	cs.send(protocol.OutboundMessage{
 		Type:      "session_continued",
 		SessionID: sess.ID(),
@@ -73,52 +64,12 @@ func (cs *connState) handleContinue(msg protocol.InboundMessage) {
 	})
 }
 
-func (cs *connState) handleCancel(msg protocol.InboundMessage) {
-	logger.Default().Info("cancel requested")
-	cs.sess.Cancel()
-}
-
-func (cs *connState) handleBranch(msg protocol.InboundMessage) {
-	branch, err := cs.sess.Branch(msg.MessageID)
-	if err != nil {
-		logger.Default().Error("branch failed", "error", err)
-		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
-		return
-	}
-	cs.sess = branch
-	cs.sess.SetOnEvent(cs.send)
-	cs.send(protocol.OutboundMessage{
-		Type:      "branch_created",
-		SessionID: branch.ID(),
-		MessageID: msg.MessageID,
-	})
-}
-
-func (cs *connState) handleSwitchSession(msg protocol.InboundMessage) {
-	switched, err := cs.sess.SwitchTo(msg.SessionID)
-	if err != nil {
-		logger.Default().Error("switch session failed", "error", err)
-		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
-		return
-	}
-	cs.sess = switched
-	cs.sess.SetOnEvent(cs.send)
-	cs.send(protocol.OutboundMessage{
-		Type:      "session_switched",
-		SessionID: switched.ID(),
-	})
-}
-
 func (cs *connState) handleListSessions(msg protocol.InboundMessage) {
-	ch := cs.channel
-	if ch == "" {
-		ch = msg.Channel
-	}
-	if ch == "" {
+	if msg.Channel == "" {
 		cs.send(protocol.OutboundMessage{Type: "session_list"})
 		return
 	}
-	sessionMetas, err := session.List(cs.store, ch)
+	sessionMetas, err := session.List(cs.gw.store, msg.Channel)
 	if err != nil {
 		logger.Default().Error("list sessions failed", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
@@ -155,30 +106,52 @@ func (cs *connState) handleConnection() {
 		switch msg.Type {
 		case "new":
 			cs.handleNew(msg)
-			continue
 		case "continue":
 			cs.handleContinue(msg)
-			continue
 		case "list_sessions":
 			cs.handleListSessions(msg)
-			continue
-		}
-
-		if cs.sess == nil {
-			continue
-		}
-
-		switch msg.Type {
 		case "cancel":
-			cs.handleCancel(msg)
+			if msg.SessionID == "" {
+				continue
+			}
+			sess, err := cs.gw.resolve(msg.SessionID)
+			if err != nil {
+				cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
+				continue
+			}
+			sess.Cancel()
 		case "branch":
-			cs.handleBranch(msg)
-		case "switch_session":
-			cs.handleSwitchSession(msg)
+			if msg.SessionID == "" {
+				continue
+			}
+			sess, err := cs.gw.resolve(msg.SessionID)
+			if err != nil {
+				cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
+				continue
+			}
+			branchID, err := sess.Branch(msg.MessageID)
+			if err != nil {
+				logger.Default().Error("branch failed", "error", err)
+				cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
+				continue
+			}
+			cs.send(protocol.OutboundMessage{
+				Type:      "branch_created",
+				SessionID: branchID,
+				MessageID: msg.MessageID,
+			})
 		case "session_state":
 			cs.handleHistory(msg)
 		default:
-			go cs.sess.ProcessMessage(msg.Content)
+			if msg.SessionID == "" {
+				continue
+			}
+			sess, err := cs.gw.resolve(msg.SessionID)
+			if err != nil {
+				cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
+				continue
+			}
+			go sess.ProcessMessage(msg.Content, cs.send)
 		}
 	}
 }

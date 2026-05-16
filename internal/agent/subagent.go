@@ -51,7 +51,7 @@ func (s *Session) SpawnSubagent(ctx context.Context, description, taskPrompt str
 		return "", err
 	}
 
-	child.ProcessMessage(taskPrompt)
+	child.ProcessMessage(taskPrompt, child.emitter.SendEvent)
 
 	lastResponse := child.getLastAssistantResponse()
 	if lastResponse == "" {
@@ -72,7 +72,7 @@ func (s *Session) SpawnSubagentAsync(ctx context.Context, description, taskPromp
 
 	runFunc := func(ctx context.Context) (string, error) {
 		child.parentCtx = ctx
-		child.ProcessMessage(taskPrompt)
+		child.ProcessMessage(taskPrompt, child.emitter.SendEvent)
 		return child.getLastAssistantResponse(), nil
 	}
 
@@ -113,7 +113,6 @@ func (s *Session) createChildSession(ctx context.Context, description, taskPromp
 		store:        s.store,
 		model:        s.model,
 		systemPrompt: subPrompt,
-		onEvent:      subEmitter.SendEvent,
 		parentID:     s.id,
 		depth:        s.depth + 1,
 		parentCtx:    ctx,

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/devlin-ai/devlin/internal/agent"
@@ -19,14 +20,33 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-func setupGateway() (llm.Provider, *store.Store, string, int, error) {
+type gateway struct {
+	store    *store.Store
+	provider llm.Provider
+	model    string
+	sessions sync.Map
+}
+
+func (g *gateway) resolve(sessionID string) (*agent.Session, error) {
+	if v, ok := g.sessions.Load(sessionID); ok {
+		return v.(*agent.Session), nil
+	}
+	sess, err := agent.Load(g.provider, g.store, sessionID, g.model)
+	if err != nil {
+		return nil, err
+	}
+	g.sessions.Store(sessionID, sess)
+	return sess, nil
+}
+
+func setupGateway() (*gateway, int, error) {
 	logger.Init()
 	log := logger.Default()
 
 	cfg, err := config.Load()
 	if err != nil {
 		log.Error("failed to load config", "error", err)
-		return nil, nil, "", 0, err
+		return nil, 0, err
 	}
 
 	providerName, modelName := cfg.LLM.ModelParts()
@@ -35,20 +55,26 @@ func setupGateway() (llm.Provider, *store.Store, string, int, error) {
 	provider, err := llm.NewProvider(providerName, providerCfg.APIKey, modelName, providerCfg.BaseURL)
 	if err != nil {
 		log.Error("failed to create provider", "provider", providerName, "error", err)
-		return nil, nil, "", 0, err
+		return nil, 0, err
 	}
 
-	store, err := store.NewStore(cfg.Database.ResolvePath())
+	db, err := store.NewStore(cfg.Database.ResolvePath())
 	if err != nil {
 		log.Error("failed to open store", "error", err)
-		return nil, nil, "", 0, err
+		return nil, 0, err
 	}
 
 	llm.SetDefaultStallTimeout(cfg.LLM.StallTimeoutDuration())
 	process.SetDefaultBackgroundTimeout(cfg.Session.BackgroundTimeoutDuration())
 	agent.SetDefaultMaxDepth(cfg.Session.MaxDepth)
 
-	return provider, store, modelName, cfg.Gateway.Port, nil
+	gw := &gateway{
+		store:    db,
+		provider: provider,
+		model:    modelName,
+	}
+
+	return gw, cfg.Gateway.Port, nil
 }
 
 func runServer(r *chi.Mux, port int) {
@@ -73,11 +99,11 @@ func runServer(r *chi.Mux, port int) {
 }
 
 func main() {
-	provider, store, modelName, port, err := setupGateway()
+	gw, port, err := setupGateway()
 	if err != nil {
 		os.Exit(1)
 	}
-	defer store.Close()
+	defer gw.store.Close()
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -92,17 +118,9 @@ func main() {
 		defer conn.Close()
 
 		cs := &connState{
-			conn:     conn,
-			store:    store,
-			provider: provider,
-			model:    modelName,
+			conn: conn,
+			gw:   gw,
 		}
-		defer func() {
-			if cs.sess != nil {
-				cs.sess.Cancel()
-			}
-		}()
-
 		cs.handleConnection()
 	})
 

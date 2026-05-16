@@ -74,9 +74,7 @@ type wsSessionContinuedMsg struct {
 	sessionID string
 	mode      string
 }
-type wsSessionSwitchedMsg struct {
-	sessionID string
-}
+
 type wsSessionListMsg struct {
 	sessions []protocol.SessionInfo
 }
@@ -104,19 +102,9 @@ func sendNew(conn *websocket.Conn) tea.Cmd {
 	}
 }
 
-func sendBranch(conn *websocket.Conn, messageID int64) tea.Cmd {
+func sendBranch(conn *websocket.Conn, sessionID string, messageID int64) tea.Cmd {
 	return func() tea.Msg {
-		err := conn.WriteJSON(protocol.InboundMessage{Type: "branch", MessageID: messageID})
-		if err != nil {
-			return wsErrorMsg{text: err.Error()}
-		}
-		return sentMsg{}
-	}
-}
-
-func sendSwitchSession(conn *websocket.Conn, sessionID string) tea.Cmd {
-	return func() tea.Msg {
-		err := conn.WriteJSON(protocol.InboundMessage{Type: "switch_session", SessionID: sessionID})
+		err := conn.WriteJSON(protocol.InboundMessage{Type: "branch", SessionID: sessionID, MessageID: messageID})
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
@@ -143,9 +131,9 @@ func sendListSessions(conn *websocket.Conn) tea.Cmd {
 	}
 }
 
-func sendCancel(conn *websocket.Conn) tea.Cmd {
+func sendCancel(conn *websocket.Conn, sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		err := conn.WriteJSON(protocol.InboundMessage{Type: "cancel"})
+		err := conn.WriteJSON(protocol.InboundMessage{Type: "cancel", SessionID: sessionID})
 		if err != nil {
 			return wsErrorMsg{text: err.Error()}
 		}
@@ -241,8 +229,6 @@ func readNext(conn *websocket.Conn) tea.Cmd {
 			return wsSessionContinuedMsg{sessionID: evt.SessionID, mode: evt.Mode}
 		case "branch_created":
 			return wsBranchCreatedMsg{sessionID: evt.SessionID, messageID: evt.MessageID}
-		case "session_switched":
-			return wsSessionSwitchedMsg{sessionID: evt.SessionID}
 		case "session_list":
 			return wsSessionListMsg{sessions: evt.Sessions}
 		case "session_state":

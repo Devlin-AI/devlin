@@ -73,7 +73,7 @@ type Session struct {
 	cwd          string
 }
 
-func New(provider llm.Provider, db *store.Store, ch string, mode string, model string, onEvent func(Event)) (*Session, error) {
+func New(provider llm.Provider, db *store.Store, ch string, mode string, model string) (*Session, error) {
 	id := uuid.New().String()
 
 	if err := session.Create(db, id, ch, mode); err != nil {
@@ -91,7 +91,6 @@ func New(provider llm.Provider, db *store.Store, ch string, mode string, model s
 		store:        db,
 		model:        model,
 		systemPrompt: sysPrompt,
-		onEvent:      onEvent,
 		cwd:          cwd,
 	}
 	s.emitter = s
@@ -107,7 +106,7 @@ func New(provider llm.Provider, db *store.Store, ch string, mode string, model s
 	return s, nil
 }
 
-func Load(provider llm.Provider, db *store.Store, sessionID string, model string, onEvent func(Event)) (*Session, error) {
+func Load(provider llm.Provider, db *store.Store, sessionID string, model string) (*Session, error) {
 	history, err := session.LoadFullHistory(db, sessionID)
 	if err != nil {
 		return nil, err
@@ -141,7 +140,6 @@ func Load(provider llm.Provider, db *store.Store, sessionID string, model string
 		model:        model,
 		history:      history,
 		systemPrompt: sysPrompt,
-		onEvent:      onEvent,
 		parentID:     parentID,
 		branchPoint:  branchPoint,
 		depth:        depth,
@@ -172,12 +170,6 @@ func (s *Session) Channel() string {
 
 func (s *Session) Mode() string {
 	return s.mode
-}
-
-func (s *Session) SetOnEvent(fn func(Event)) {
-	s.sessionMu.Lock()
-	defer s.sessionMu.Unlock()
-	s.onEvent = fn
 }
 
 func (s *Session) Cancel() {

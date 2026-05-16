@@ -116,7 +116,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textarea.Placeholder = "Send a new message..."
 				refreshView(&m)
 				if m.conn != nil {
-					return m, sendCancel(m.conn)
+					return m, sendCancel(m.conn, m.sessionID)
 				}
 			} else {
 				if m.textarea.Value() != "" {
@@ -139,22 +139,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "ctrl+right":
 			if m.conn != nil && len(m.childBranches) > 0 && !m.streaming {
-				return m, sendSwitchSession(m.conn, m.childBranches[len(m.childBranches)-1].SessionID)
+				return m, sendSessionState(m.conn, m.childBranches[len(m.childBranches)-1].SessionID)
 			}
 			return m, nil
 		case "ctrl+left":
 			if m.conn != nil && m.parent != nil && !m.streaming {
-				return m, sendSwitchSession(m.conn, m.parent.SessionID)
+				return m, sendSessionState(m.conn, m.parent.SessionID)
 			}
 			return m, nil
 		case "ctrl+up":
 			if m.conn != nil && m.siblingIdx > 0 && !m.streaming {
-				return m, sendSwitchSession(m.conn, m.siblings[m.siblingIdx-1].SessionID)
+				return m, sendSessionState(m.conn, m.siblings[m.siblingIdx-1].SessionID)
 			}
 			return m, nil
 		case "ctrl+down":
 			if m.conn != nil && m.siblingIdx < len(m.siblings)-1 && !m.streaming {
-				return m, sendSwitchSession(m.conn, m.siblings[m.siblingIdx+1].SessionID)
+				return m, sendSessionState(m.conn, m.siblings[m.siblingIdx+1].SessionID)
 			}
 			return m, nil
 		case "enter":
@@ -176,7 +176,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					if msgID > 0 {
-						return m, sendBranch(m.conn, msgID)
+						return m, sendBranch(m.conn, m.sessionID, msgID)
 					}
 					m.messages = append(m.messages, message{role: "system", text: "no message to branch from"})
 					refreshView(&m)
@@ -191,7 +191,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
 
-				err := m.conn.WriteJSON(protocol.InboundMessage{Content: val})
+				err := m.conn.WriteJSON(protocol.InboundMessage{Content: val, SessionID: m.sessionID})
 				if err != nil {
 					m.streaming = false
 					m.messages[len(m.messages)-1] = message{role: "error", text: err.Error()}
@@ -413,19 +413,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wsSessionContinuedMsg:
 		m.sessionID = msg.sessionID
-		if m.conn != nil {
-			return m, tea.Batch(readNext(m.conn), sendSessionState(m.conn, m.sessionID))
-		}
-		return m, nil
-
-	case wsSessionSwitchedMsg:
-		m.sessionID = msg.sessionID
-		m.messages = nil
-		m.parent = nil
-		m.childBranches = nil
-		m.siblings = nil
-		m.siblingIdx = 0
-		refreshView(&m)
 		if m.conn != nil {
 			return m, tea.Batch(readNext(m.conn), sendSessionState(m.conn, m.sessionID))
 		}

@@ -32,9 +32,11 @@ func retryBackoff(attempt int) time.Duration {
 	return delay + jitter
 }
 
-func (s *Session) ProcessMessage(content string) {
+func (s *Session) ProcessMessage(content string, onEvent func(Event)) {
 	s.sessionMu.Lock()
 	defer s.sessionMu.Unlock()
+
+	s.onEvent = onEvent
 
 	s.history = append(s.history, message.Message{
 		Role:      message.RoleUser,
