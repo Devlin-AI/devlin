@@ -74,17 +74,11 @@ func (cs *connState) handleContinue(msg protocol.InboundMessage) {
 }
 
 func (cs *connState) handleCancel(msg protocol.InboundMessage) {
-	if !cs.requireSession() {
-		return
-	}
 	logger.Default().Info("cancel requested")
 	cs.sess.Cancel()
 }
 
 func (cs *connState) handleBranch(msg protocol.InboundMessage) {
-	if !cs.requireSession() {
-		return
-	}
 	branch, err := cs.sess.Branch(msg.MessageID)
 	if err != nil {
 		logger.Default().Error("branch failed", "error", err)
@@ -101,9 +95,6 @@ func (cs *connState) handleBranch(msg protocol.InboundMessage) {
 }
 
 func (cs *connState) handleSwitchSession(msg protocol.InboundMessage) {
-	if !cs.requireSession() {
-		return
-	}
 	switched, err := cs.sess.SwitchTo(msg.SessionID)
 	if err != nil {
 		logger.Default().Error("switch session failed", "error", err)
@@ -164,8 +155,20 @@ func (cs *connState) handleConnection() {
 		switch msg.Type {
 		case "new":
 			cs.handleNew(msg)
+			continue
 		case "continue":
 			cs.handleContinue(msg)
+			continue
+		case "list_sessions":
+			cs.handleListSessions(msg)
+			continue
+		}
+
+		if cs.sess == nil {
+			continue
+		}
+
+		switch msg.Type {
 		case "cancel":
 			cs.handleCancel(msg)
 		case "branch":
@@ -174,17 +177,8 @@ func (cs *connState) handleConnection() {
 			cs.handleSwitchSession(msg)
 		case "session_state":
 			cs.handleHistory(msg)
-		case "list_sessions":
-			cs.handleListSessions(msg)
 		default:
-			if !cs.requireSession() {
-				continue
-			}
 			go cs.sess.ProcessMessage(msg.Content)
 		}
 	}
-}
-
-func (cs *connState) requireSession() bool {
-	return cs.sess != nil
 }

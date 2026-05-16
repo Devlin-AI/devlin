@@ -59,9 +59,6 @@ func (cs *connState) loadSiblingInfo(sessionID string) (*protocol.BranchInfo, []
 }
 
 func (cs *connState) handleHistory(msg protocol.InboundMessage) {
-	if !cs.requireSession() {
-		return
-	}
 	targetID := msg.SessionID
 	if targetID == "" {
 		targetID = cs.sess.ID()
