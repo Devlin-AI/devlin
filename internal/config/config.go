@@ -49,39 +49,39 @@ func stripComments(data []byte) []byte {
 }
 
 type databaseConfig struct {
-	Path string `json:"path,omitempty"`
+	Path string
 }
 
 type tuiConfig struct {
-	UnlimitedTools []string `json:"unlimited_tools,omitempty"`
+	UnlimitedTools []string
 }
 
 type sessionConfig struct {
-	MaxDepth          int `json:"max_depth"`
-	BackgroundTimeout int `json:"background_timeout,omitempty"`
+	MaxDepth          int
+	BackgroundTimeout int
 }
 
 type gatewayConfig struct {
-	Port int `json:"port"`
+	Port int
 }
 
 type llmProviderConfig struct {
-	APIKey  string `json:"api_key"`
-	BaseURL string `json:"base_url,omitempty"`
+	APIKey  string
+	BaseURL string
 }
 
 type llmConfig struct {
-	Providers    map[string]llmProviderConfig `json:"providers"`
-	Model        string                       `json:"model"`
-	StallTimeout int                          `json:"stall_timeout,omitempty"`
+	Providers    map[string]llmProviderConfig
+	Model        string
+	StallTimeout int
 }
 
 type Config struct {
-	Gateway  gatewayConfig  `json:"gateway"`
-	LLM      llmConfig      `json:"llm"`
-	Session  sessionConfig  `json:"session"`
-	Database databaseConfig `json:"database"`
-	TUI      tuiConfig     `json:"tui"`
+	Gateway  gatewayConfig
+	LLM      llmConfig
+	Session  sessionConfig
+	Database databaseConfig
+	TUI      tuiConfig
 }
 
 func (c *databaseConfig) ResolvePath() string {
@@ -93,24 +93,38 @@ func (c *databaseConfig) ResolvePath() string {
 }
 
 func (c *llmConfig) StallTimeoutDuration() time.Duration {
-	if c.StallTimeout <= 0 {
-		return 60 * time.Second
-	}
 	return time.Duration(c.StallTimeout) * time.Second
 }
 
 func (c *sessionConfig) BackgroundTimeoutDuration() time.Duration {
-	if c.BackgroundTimeout <= 0 {
-		return 120 * time.Second
-	}
 	return time.Duration(c.BackgroundTimeout) * time.Second
 }
 
-func (c *gatewayConfig) validate() error {
-	if c.Port <= 0 {
-		return fmt.Errorf("port must be positive, got %d", c.Port)
+func (c *llmConfig) ModelParts() (string, string) {
+	for i, ch := range c.Model {
+		if ch == '/' {
+			return c.Model[:i], c.Model[i+1:]
+		}
+	}
+	return c.Model, ""
+}
+
+func requirePositive(name string, v int) error {
+	if v <= 0 {
+		return fmt.Errorf("%s must be positive, got %d", name, v)
 	}
 	return nil
+}
+
+func requireNonNegative(name string, v int) error {
+	if v < 0 {
+		return fmt.Errorf("%s must be non-negative, got %d", name, v)
+	}
+	return nil
+}
+
+func (c *gatewayConfig) validate() error {
+	return requirePositive("port", c.Port)
 }
 
 func (c *llmConfig) validate() error {
@@ -127,26 +141,17 @@ func (c *llmConfig) validate() error {
 	if _, ok := c.Providers[provider]; !ok {
 		return fmt.Errorf("provider %q not found (model %q)", provider, c.Model)
 	}
-	return nil
+	return requireNonNegative("stall_timeout", c.StallTimeout)
 }
 
 func (c *sessionConfig) validate() error {
-	if c.MaxDepth <= 0 {
-		return fmt.Errorf("max_depth must be positive, got %d", c.MaxDepth)
+	if err := requirePositive("max_depth", c.MaxDepth); err != nil {
+		return err
 	}
-	return nil
+	return requireNonNegative("background_timeout", c.BackgroundTimeout)
 }
 
-func (c *llmConfig) ModelParts() (string, string) {
-	for i, ch := range c.Model {
-		if ch == '/' {
-			return c.Model[:i], c.Model[i+1:]
-		}
-	}
-	return c.Model, ""
-}
-
-func (c *Config) Validate() error {
+func (c *Config) validate() error {
 	if err := c.Gateway.validate(); err != nil {
 		return fmt.Errorf("gateway: %w", err)
 	}
@@ -170,14 +175,82 @@ func Load() (*Config, error) {
 
 	data = stripComments(data)
 
-	var config Config
-	if err := json.Unmarshal(data, &config); err != nil {
+	type jsonLLMProvider struct {
+		APIKey  string `json:"api_key"`
+		BaseURL string `json:"base_url,omitempty"`
+	}
+
+	type jsonGateway struct {
+		Port *int `json:"port"`
+	}
+
+	type jsonLLM struct {
+		Providers    map[string]jsonLLMProvider `json:"providers"`
+		Model        string                      `json:"model"`
+		StallTimeout *int                        `json:"stall_timeout,omitempty"`
+	}
+
+	type jsonSession struct {
+		MaxDepth          *int `json:"max_depth"`
+		BackgroundTimeout *int `json:"background_timeout,omitempty"`
+	}
+
+	type jsonDatabase struct {
+		Path string `json:"path,omitempty"`
+	}
+
+	type jsonTUI struct {
+		UnlimitedTools []string `json:"unlimited_tools,omitempty"`
+	}
+
+	type jsonConfig struct {
+		Gateway  jsonGateway  `json:"gateway"`
+		LLM      jsonLLM      `json:"llm"`
+		Session  jsonSession  `json:"session"`
+		Database jsonDatabase `json:"database"`
+		TUI      jsonTUI      `json:"tui"`
+	}
+
+	var raw jsonConfig
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	if err := config.Validate(); err != nil {
+	fill := func(v *int, def int) int {
+		if v != nil {
+			return *v
+		}
+		return def
+	}
+
+	providers := make(map[string]llmProviderConfig, len(raw.LLM.Providers))
+	for name, p := range raw.LLM.Providers {
+		providers[name] = llmProviderConfig{
+			APIKey:  p.APIKey,
+			BaseURL: p.BaseURL,
+		}
+	}
+
+	cfg := &Config{
+		Gateway: gatewayConfig{
+			Port: fill(raw.Gateway.Port, 8080),
+		},
+		LLM: llmConfig{
+			Providers:    providers,
+			Model:        raw.LLM.Model,
+			StallTimeout: fill(raw.LLM.StallTimeout, 60),
+		},
+		Session: sessionConfig{
+			MaxDepth:          fill(raw.Session.MaxDepth, 1),
+			BackgroundTimeout: fill(raw.Session.BackgroundTimeout, 120),
+		},
+		Database: databaseConfig{Path: raw.Database.Path},
+		TUI:      tuiConfig{UnlimitedTools: raw.TUI.UnlimitedTools},
+	}
+
+	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	return &config, nil
+	return cfg, nil
 }
