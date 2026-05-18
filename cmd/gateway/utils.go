@@ -59,13 +59,7 @@ func (cs *connState) loadSiblingInfo(sessionID string) (*protocol.BranchInfo, []
 }
 
 func (cs *connState) handleHistory(msg protocol.InboundMessage) {
-	targetID := msg.SessionID
-	if targetID == "" {
-		cs.send(protocol.OutboundMessage{Type: "error", Content: "session_id required"})
-		return
-	}
-
-	msgs, err := session.LoadFullHistory(cs.gw.store, targetID)
+	msgs, err := session.LoadFullHistory(cs.gw.store, msg.SessionID)
 	if err != nil {
 		logger.Default().Error("load history failed", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
@@ -102,7 +96,7 @@ func (cs *connState) handleHistory(msg protocol.InboundMessage) {
 		histMsgs = append(histMsgs, hm)
 	}
 
-	chain, err := branch.LoadChain(cs.gw.store, targetID)
+	chain, err := branch.LoadChain(cs.gw.store, msg.SessionID)
 	if err != nil {
 		logger.Default().Error("load branch chain failed", "error", err)
 		cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
@@ -116,17 +110,17 @@ func (cs *connState) handleHistory(msg protocol.InboundMessage) {
 		})
 	}
 
-	parent, siblings, siblingIdx := cs.loadSiblingInfo(targetID)
+	parent, siblings, siblingIdx := cs.loadSiblingInfo(msg.SessionID)
 
-	childMetas, err := branch.ListChildren(cs.gw.store, targetID)
+	childMetas, err := branch.ListChildren(cs.gw.store, msg.SessionID)
 	if err != nil {
-		logger.Default().Error("list child branches failed", "session_id", targetID, "error", err)
+		logger.Default().Error("list child branches failed", "session_id", msg.SessionID, "error", err)
 	}
 	children := cs.branchInfos(childMetas)
 
 	cs.send(protocol.OutboundMessage{
 		Type:         "session_state",
-		SessionID:    targetID,
+		SessionID:    msg.SessionID,
 		Messages:     histMsgs,
 		BranchPoints: points,
 		Parent:       parent,

@@ -106,34 +106,33 @@ func (cs *connState) handleConnection() {
 		switch msg.Type {
 		case "new":
 			cs.handleNew(msg)
+			continue
 		case "continue":
 			cs.handleContinue(msg)
+			continue
 		case "list_sessions":
 			cs.handleListSessions(msg)
+			continue
+		}
+
+		if msg.SessionID == "" {
+			continue
+		}
+		sess, err := cs.gw.resolve(msg.SessionID)
+		if err != nil {
+			cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
+			continue
+		}
+
+		switch msg.Type {
 		case "cancel":
-			if msg.SessionID == "" {
-				continue
-			}
-			sess, err := cs.gw.resolve(msg.SessionID)
-			if err != nil {
-				cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
-				continue
-			}
 			sess.Cancel()
 		case "branch":
-			if msg.SessionID == "" {
-				continue
-			}
-			sess, err := cs.gw.resolve(msg.SessionID)
-			if err != nil {
-				cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
-				continue
-			}
 			branchID, err := sess.Branch(msg.MessageID)
 			if err != nil {
 				logger.Default().Error("branch failed", "error", err)
 				cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
-				continue
+				break
 			}
 			cs.send(protocol.OutboundMessage{
 				Type:      "branch_created",
@@ -143,14 +142,6 @@ func (cs *connState) handleConnection() {
 		case "session_state":
 			cs.handleHistory(msg)
 		default:
-			if msg.SessionID == "" {
-				continue
-			}
-			sess, err := cs.gw.resolve(msg.SessionID)
-			if err != nil {
-				cs.send(protocol.OutboundMessage{Type: "error", Content: err.Error()})
-				continue
-			}
 			go sess.ProcessMessage(msg.Content, cs.send)
 		}
 	}
