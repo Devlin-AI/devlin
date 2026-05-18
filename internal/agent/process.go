@@ -152,11 +152,10 @@ func (s *Session) processLoop() {
 			return
 		}
 
-		s.setCancel(nil)
-
 		if ctx.Err() != nil {
 			s.emitter.SendEvent(Event{Type: "cancelled"})
 			s.history = s.history[:len(s.history)-1]
+			s.setCancel(nil)
 			return
 		}
 
